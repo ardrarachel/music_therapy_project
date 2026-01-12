@@ -1,27 +1,38 @@
 <!DOCTYPE html>
 <html>
+
 <head>
     <title>Multimodal Music Therapy AI</title>
-    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
+
 <body>
 
-<h1>Multimodal Music Therapy AI</h1>
+    <div class="container">
+        <h1>Multimodal Music Therapy AI</h1>
+        <h2 id="question">How are you feeling today?</h2>
 
-<h2 id="question">How are you feeling today?</h2>
+        <div class="media-container">
+            <!-- Camera -->
+            <video id="video" autoplay muted playsinline></video>
+        </div>
 
-<!-- Camera -->
-<video id="video" autoplay muted></video>
+        <div class="controls">
+            <!-- Voice -->
+            <button id="recordBtn">
+                <span>🎤</span> Start Speaking
+            </button>
+        </div>
 
-<!-- Voice -->
-<button id="recordBtn">🎤 Start Speaking</button>
+        <div class="status-box">
+            <p id="status">Waiting for your response...</p>
+            <p><b>Detected Emotion:</b> <span id="emotion">Neutral</span></p>
+        </div>
 
-<p id="status">Waiting for your response...</p>
+        <audio id="musicPlayer" controls></audio>
+    </div>
 
-<p><b>Detected Emotion:</b> <span id="emotion">---</span></p>
-
-<audio id="musicPlayer" controls></audio>
-
-<script src="script.js"></script>
+    <script src="{{ url_for('static', filename='js/script.js') }}"></script>
 </body>
+
 </html>
