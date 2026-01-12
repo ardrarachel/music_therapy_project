@@ -1,12 +1,25 @@
 import cv2
 import mediapipe as mp
+import math
 
-mp_face_mesh = mp.solutions.face_mesh
-face_mesh = mp_face_mesh.FaceMesh(
+# Proper imports
+from mediapipe import solutions
+
+# Initialize FaceMesh
+face_mesh_module = solutions.face_mesh.FaceMesh(
     static_image_mode=False,
     max_num_faces=1,
-    refine_landmarks=True
+    min_detection_confidence=0.5,
+    min_tracking_confidence=0.5
 )
+
+# Optional drawing utility
+mp_drawing = solutions.drawing_utils
+
+
+
+
+
 
 def calculate_distance(point1, point2):
     """
