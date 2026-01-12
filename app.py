@@ -1,6 +1,7 @@
 from flask import Flask, render_template, request, jsonify
 import os
 from audio_logic import analyze_voice_input
+import real_emotion
 
 app = Flask(__name__)
 
@@ -22,8 +23,27 @@ def index():
     return render_template('index.html')
 
 # --- ROUTE FOR MEMBER 1 (Camera) ---
+# Updated to receive actual image data from frontend loop
+@app.route('/detect_face', methods=['POST'])
+def detect_face():
+    if 'face_image' not in request.files:
+        return jsonify({"error": "No face image"}), 400
+    
+    file = request.files['face_image']
+    filepath = os.path.join(UPLOAD_FOLDER, "face_capture.jpg")
+    file.save(filepath)
+
+    # Analyze face
+    emotion = real_emotion.analyze_face(filepath)
+    
+    # Update Global State
+    current_state['face_emotion'] = emotion
+
+    return jsonify({"status": "success", "emotion": emotion})
+
 @app.route('/update_face', methods=['POST'])
 def update_face():
+    # Keep old route for backward compatibility if needed, or redirect logic
     data = request.json
     current_state['face_emotion'] = data.get('emotion', 'Neutral')
     return jsonify({"status": "updated"})
