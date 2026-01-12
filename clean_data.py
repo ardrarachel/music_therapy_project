@@ -1,16 +1,32 @@
 import pandas as pd
 
 # Load dataset
-df = pd.read_csv("tracks.csv")
+df = pd.read_csv("tracks.csv", low_memory=False)
 
-# Keep only required features
-df = df[["valence", "energy"]]
+print("Original columns:", df.columns)
 
-# Drop missing values
-df = df.dropna()
+# Columns to remove
+cols_to_drop = [
+    "popularity",
+    "explicit",
+    "danceability",
+    "key",
+    "loudness",
+    "mode",
+    "speechiness",
+    "acousticness",
+    "instrumentalness",
+    "liveness",
+    "tempo",
+    "time_signature"
+]
+
+# Drop the columns
+df = df.drop(columns=cols_to_drop)
+
+print("Remaining columns:", df.columns)
 
 # Save cleaned dataset
 df.to_csv("tracks_cleaned.csv", index=False)
 
-print("Saved tracks_cleaned.csv with only valence & energy")
-print("Rows:", len(df))
+print("tracks_cleaned.csv created successfully")
