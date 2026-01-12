@@ -1,18 +1,16 @@
 import pandas as pd
 
-# Load the dataset
+# Load dataset
 df = pd.read_csv("tracks.csv")
 
-# Check if file loaded correctly
-print("Rows loaded:", len(df))
-print("Columns:", df.columns)
+# Keep only required features
+df = df[["valence", "energy"]]
 
-# Clean / filter data
-df = df.dropna(subset=["valence", "energy"])
+# Drop missing values
+df = df.dropna()
 
-# Check after cleaning
-print("Rows after cleaning:", len(df))
-
-# Save the cleaned dataset
+# Save cleaned dataset
 df.to_csv("tracks_cleaned.csv", index=False)
-print("Cleaned dataset saved as tracks_cleaned.csv")
+
+print("Saved tracks_cleaned.csv with only valence & energy")
+print("Rows:", len(df))
