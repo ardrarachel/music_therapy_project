@@ -1,21 +1,11 @@
 import cv2
 import mediapipe as mp
-import math
 
-# Use try-except for robust import across different environments
-try:
-    from mediapipe.python.solutions import face_mesh
-except ImportError:
-    mp_face_mesh = mp.solutions.face_mesh
-    face_mesh = mp_face_mesh
-
-# Initialize MediaPipe Face Mesh
 mp_face_mesh = mp.solutions.face_mesh
-face_mesh_module = mp_face_mesh.FaceMesh(
+face_mesh = mp_face_mesh.FaceMesh(
+    static_image_mode=False,
     max_num_faces=1,
-    refine_landmarks=True,
-    min_detection_confidence=0.3, # Lowered from 0.5 for better detection
-    min_tracking_confidence=0.3
+    refine_landmarks=True
 )
 
 def calculate_distance(point1, point2):
