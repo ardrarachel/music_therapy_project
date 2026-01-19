@@ -1,24 +1,23 @@
 import cv2
-import mediapipe as mp
 import math
+import mediapipe as mp
 
-# Proper imports
-from mediapipe import solutions
+# Direct access to the internal modules to bypass the "solutions" error
+try:
+    from mediapipe.python.solutions import face_mesh as mp_face_mesh
+    from mediapipe.python.solutions import drawing_utils as mp_drawing
+except ImportError:
+    # Fallback for newer MediaPipe structures
+    import mediapipe.solutions.face_mesh as mp_face_mesh
+    import mediapipe.solutions.drawing_utils as mp_drawing
 
-# Initialize FaceMesh
-face_mesh_module = solutions.face_mesh.FaceMesh(
+# Initialize using the direct reference
+face_mesh_module = mp_face_mesh.FaceMesh(
     static_image_mode=False,
     max_num_faces=1,
     min_detection_confidence=0.5,
     min_tracking_confidence=0.5
 )
-
-# Optional drawing utility
-mp_drawing = solutions.drawing_utils
-
-
-
-
 
 
 def calculate_distance(point1, point2):
