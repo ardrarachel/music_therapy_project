@@ -4,80 +4,90 @@ import speech_recognition as sr
 import os
 
 def analyze_voice_input(file_path):
-    """
-    Analyzes spoken response.
-    1. Extracts 'Tone' (Emotion) using Signal Processing (Physics).
-    2. Transcribes text (Content) using Google API.
-    """
     result = {
-        "text": "",
-        "emotion": "Neutral",
-        "energy_score": 0.0,
+        "text": "(Voice Only)", 
+        "emotion": "Neutral", 
+        "energy_score": 0.0, 
         "pitch_score": 0.0
     }
     
+    # --- PART A: SPEECH TO TEXT (Dual Language Support) ---
+    recognizer = sr.Recognizer()
+    recognizer.energy_threshold = 300 
+    
     try:
-        # --- PART A: SPEECH TO TEXT (Google API) ---
-        # We use this to know WHAT they said.
-        recognizer = sr.Recognizer()
         with sr.AudioFile(file_path) as source:
             audio_data = recognizer.record(source)
+            print("   [Log] Connecting to Google API...")
+            
             try:
-                text = recognizer.recognize_google(audio_data)
+                # 1. Try English First
+                text = recognizer.recognize_google(audio_data, language='en-US')
+                print(f">> USER SAID (English): \"{text}\"")
                 result['text'] = text
-                print(f">> USER SAID: \"{text}\"") 
+                
             except sr.UnknownValueError:
-                result['text'] = "(Unintelligible)"
-                print(">> USER SAID: (Unintelligible / Background Noise)")
+                # 2. If English fails, Try Malayalam
+                print("   [Log] English failed, trying Malayalam...")
+                try:
+                    text_ml = recognizer.recognize_google(audio_data, language='ml-IN')
+                    print(f">> USER SAID (Malayalam): \"{text_ml}\"")
+                    result['text'] = text_ml
+                except:
+                    print("   [ERROR] Could not understand Audio in Eng or Mal.")
+                    
             except sr.RequestError:
-                 result['text'] = "(API Unavailable)"
-                 print(">> USER SAID: (Google API Error)")
-
-        # --- PART B: ACOUSTIC ANALYSIS (Librosa - The White Box Logic) ---
-        # Load audio (Floating point time series)
-        y, sr_rate = librosa.load(file_path, duration=5.0)
-
-        # 1. Calculate Energy (Root Mean Square)
-        rms = librosa.feature.rms(y=y)
-        energy = np.mean(rms)
-        result['energy_score'] = float(energy)
-
-        # 2. Calculate Pitch Variation (Zero Crossing Rate)
-        zcr = librosa.feature.zero_crossing_rate(y=y)
-        pitch_var = np.mean(zcr)
-        result['pitch_score'] = float(pitch_var)
-
-        # 3. Expert Rules (Thresholding - The "Expert System")
-        # Logic: We classify based on Physical properties of sound waves.
-        
-        # DEBUG: Print the Physics values to help tuning
-        print(f"   [DEBUG] Energy (Vol): {energy:.4f} | Pitch Var (Tone): {pitch_var:.4f}")
-
-        # TIER 1: HIGH ENERGY (Loud)
-        if energy > 0.12:
-            if pitch_var > 0.06:
-                result['emotion'] = "Surprise" # Very Loud + Variable (Shock/Excitement)
-            else:
-                result['emotion'] = "Anger"    # Very Loud + Monotone (Shouting)
-
-        # TIER 2: MEDIUM ENERGY (Normal/Conversational)
-        elif energy > 0.04:
-            # Differentiate based on Tone Variation
-            if pitch_var > 0.045:
-                # "Subtle Happiness" or "Happy"
-                # Moderate volume but valid tonal ups and downs
-                result['emotion'] = "Happy" 
-            else:
-                # Moderate volume but flat tone -> Neutral
-                result['emotion'] = "Neutral"
-
-        # TIER 3: LOW ENERGY (Quiet)
-        else: # energy < 0.04
-            # Very quiet usually implies sadness or withdrawal
-            result['emotion'] = "Sadness"   
-
-        return result
+                 print("   [ERROR] No Internet Connection.")
 
     except Exception as e:
-        print(f"Error analyzing voice: {e}")
-        return result
+        print(f"   [CRITICAL] Speech Recognition Crashed: {e}")
+
+
+    # --- PART B: PHYSICS & EMOTION LOGIC ---
+    try:
+        # FIX: Load the file WITHOUT duration limit (reads the whole sentence)
+        y, sr_rate = librosa.load(file_path)
+
+        # 1. AGGRESSIVE NOISE GATE (Removes Hiss/Robotic Static)
+        max_vol = np.max(np.abs(y))
+        y_clean = y[np.abs(y) > (0.25 * max_vol)] # Cut out quiet static
+        if len(y_clean) == 0: y_clean = y
+
+        # 2. Physics Calculation
+        rms = librosa.feature.rms(y=y_clean)
+        energy = float(np.mean(rms))
+        
+        zcr = librosa.feature.zero_crossing_rate(y=y_clean)
+        pitch_var = float(np.mean(zcr))
+        
+        result['energy_score'] = energy
+        result['pitch_score'] = pitch_var
+        
+        print(f"   [PHYSICS] Energy: {energy:.4f} | Pitch: {pitch_var:.4f}")
+
+        # --- EXPERT RULES ---
+        
+        # Rule 1: Silence
+        if energy < 0.015: 
+            result['emotion'] = "Neutral" 
+            print("   [LOGIC] Ignored as Background Noise")
+
+        # Rule 2: High Energy (Loud)
+        elif energy > 0.08:
+            if pitch_var > 0.05: result['emotion'] = "Excited"
+            else: result['emotion'] = "Anger"
+
+        # Rule 3: Normal Energy (Talking)
+        elif energy > 0.02: 
+            if pitch_var > 0.06: result['emotion'] = "Happy"
+            else: result['emotion'] = "Neutral"
+
+        # Rule 4: Low Energy (Quiet)
+        else:
+            if pitch_var < 0.03: result['emotion'] = "Sadness"
+            else: result['emotion'] = "Calm"
+
+    except Exception as e:
+        print(f"   [CRITICAL] Physics Engine Failed: {e}")
+
+    return result
