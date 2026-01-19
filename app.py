@@ -2,6 +2,7 @@ from flask import Flask, render_template, request, jsonify
 import os
 from audio_logic import analyze_voice_input
 import real_emotion
+import fusion_engine
 
 app = Flask(__name__)
 
@@ -66,23 +67,22 @@ def process_voice_answer():
     current_state['voice_emotion'] = analysis['emotion']
     current_state['last_spoken_text'] = analysis['text']
     
-    # 3. FUSION LOGIC (Voice Priority)
-    # Since the user just answered a question, their Voice is the most relevant signal.
-    # We override the camera for this specific moment.
+    # 3. FUSION LOGIC (New Expert System)
+    # Get the latest face emotion from the global state
+    face_val = current_state['face_emotion']
+    voice_val = analysis['emotion']
     
-    if analysis['emotion'] != "Neutral":
-        current_state['final_mood'] = analysis['emotion']
-        reason = "Detected vocal tone cues."
-    else:
-        # If voice is neutral, fall back to what the face shows
-        current_state['final_mood'] = current_state['face_emotion']
-        reason = "Voice was neutral, relying on face."
-
-    print(f"🗣️ User Said: '{analysis['text']}' | Tone: {analysis['emotion']}")
+    fusion_result = fusion_engine.fuse_emotions(face_val, voice_val)
+    
+    current_state['final_mood'] = fusion_result['final_mood']
+    
+    print(f"🗣️ User Said: '{analysis['text']}' | Fused Mood: {current_state['final_mood']}")
 
     return jsonify({
-        "bot_reply": f"I heard you say '{analysis['text']}'. You sound {analysis['emotion']}.",
-        "new_mood": current_state['final_mood']
+        "bot_reply": f"I heard you say '{analysis['text']}'.",
+        "new_mood": current_state['final_mood'],
+        "confidence": fusion_result['confidence'],
+        "reasoning": fusion_result['reasoning']
     })
 
 if __name__ == '__main__':
