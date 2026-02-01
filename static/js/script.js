@@ -185,7 +185,8 @@ function sendAudioToBackend(audioBlob, faceBlob) {
     })
         .then(res => res.json())
         .then(data => {
-            statusText.innerText = data.bot_reply;
+            statusText.innerHTML = `${data.bot_reply}<br><b>Final Mood:</b> ${data.new_mood}<br><small>${data.reasoning}</small>`;
+            faceEmotionDisplay.innerText = data.new_mood;
             recordBtn.disabled = false;
         })
         .catch(err => {
