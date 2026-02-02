@@ -85,7 +85,7 @@ def get_emotion(landmarks):
 
     # Lowered MAR threshold from 0.5 to 0.3 for "subtle" surprise
     # Lowered brow raise slightly
-    if mar > 0.25 and avg_brow_raise > 0.04: 
+    if mar > 0.20 and avg_brow_raise > 0.04: 
         return f"Surprised: Mouth open ({mar:.2f})"
 
     # 3. ANGRY: Glabella Distance (Inter-Brow)
@@ -111,7 +111,7 @@ def get_emotion(landmarks):
     # Corners lower than center. (smile_val is negative).
     # Made more sensitive (closer to 0).
     
-    if smile_val < -0.005: # Very subtle frown
+    if smile_val < -0.000: # Very subtle frown
         return f"Sad: Corners down ({smile_val:.3f})"
 
     # 5. NEUTRAL - Return debug info to help user trigger emotions
