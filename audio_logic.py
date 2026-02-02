@@ -1,50 +1,77 @@
 import os
+import random
 import pygame
+import time
+import threading
 
-# --------------------- Song Selection ---------------------
-def select_song(emotion):
-    """
-    Selects a Malayalam song based on the detected emotion.
-    Emotions: sad, happy, angry, surprised, neutral
-    """
-    emotion = emotion.lower()
-    
-    if emotion == "sad":
-        return "audio/malayalam/malayalam_sad.mp3"
-    elif emotion == "happy":
-        return "audio/malayalam/malayalam_happy.mp3"
-    elif emotion == "angry":
-        return "audio/malayalam/malayalam_angry.mp3"
-    elif emotion == "surprised":
-        return "audio/malayalam/malayalam_surprised.mp3"
-    else:  # neutral or unknown
-        return "audio/malayalam/malayalam_calm.mp3"
+import os
+BASE_PATH = os.path.join(os.getcwd(), "audio", "malayalam")
 
-# --------------------- Play Song ---------------------
-def play_song(song_path):
-    """
-    Plays the given song using pygame.
-    """
-    if not os.path.exists(song_path):
-        print(f"Song not found ❌: {song_path}")
+EMOTION_PATHS = {
+    "Sad": os.path.join(BASE_PATH, "sad"),
+    "Angry": os.path.join(BASE_PATH, "angry"),
+    "Neutral": os.path.join(BASE_PATH, "neutral"),
+    "Happy": os.path.join(BASE_PATH, "happy"),
+    "Surprised": os.path.join(BASE_PATH, "surprised")
+}
+
+ISO_FLOW = {
+    "Sad": ["Sad", "Neutral", "Happy"],
+    "Angry": ["Angry", "Neutral", "Happy"],
+    "Neutral": ["Neutral", "Happy"],
+    "Happy": ["Happy"],
+    "Surprised": ["Surprised", "Happy"]
+}
+
+
+def init_player():
+    if not pygame.mixer.get_init():
+        pygame.mixer.init()
+
+def load_songs(folder):
+    print(f"🔍 Loading songs from folder: {folder}")
+    if not os.path.exists(folder):
+        print(f"⚠ Folder missing: {folder}")
+        return []
+    songs = [os.path.join(folder, f) for f in os.listdir(folder) if f.endswith(".mp3")]
+    print(f"🎵 Found songs: {songs}")
+    return songs
+
+
+
+def build_iso_playlist(start_emotion):
+    flow = ISO_FLOW.get(start_emotion, ["Neutral"])
+    playlist = []
+
+    for emotion in flow:
+        songs = load_songs(EMOTION_PATHS.get(emotion, ""))
+        if songs:
+            playlist.append(random.choice(songs))
+
+    print("🎶 Playlist:", playlist)
+    return playlist
+
+
+def play_playlist_thread(playlist):
+    init_player()
+
+    for song in playlist:
+        print(f"▶ Playing: {song}")
+        pygame.mixer.music.load(song)
+        pygame.mixer.music.play()
+
+        while pygame.mixer.music.get_busy():
+            time.sleep(1)
+
+
+def start_music_therapy(emotion):
+    print(f"\n🔥 Starting Music Therapy | Mood: {emotion}")
+
+    playlist = build_iso_playlist(emotion)
+
+    if not playlist:
+        print("❌ No songs found")
         return
 
-    pygame.mixer.init()
-    pygame.mixer.music.load(song_path)
-    pygame.mixer.music.play()
-    print(f"Playing song: {song_path}")
-
-    # Wait until song finishes
-    while pygame.mixer.music.get_busy():
-        pygame.time.Clock().tick(10)
-
-# --------------------- MAIN ---------------------
-if __name__ == "__main__":
-    # Simulate a pre-detected emotion from your system
-    detected_emotion = "happy"  # Change this to test: sad, angry, surprised, neutral
-
-    # Select the song
-    song_file = select_song(detected_emotion)
-
-    # Play the selected song
-    play_song(song_file)
+    # ✅ RUN MUSIC IN BACKGROUND
+    threading.Thread(target=play_playlist_thread, args=(playlist,), daemon=True).start()
