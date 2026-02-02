@@ -19,7 +19,7 @@ def record_voice(filename="audio/test_voice.wav", duration=5, fs=44100):
 # --------------------- Voice Analysis ---------------------
 def analyze_voice_input(file_path):
     result = {
-        "text": "(Voice Only)",
+        "text": "No transcription",
         "emotion": "Neutral",
         "energy_score": 0.0,
         "pitch_score": 0.0
@@ -28,6 +28,8 @@ def analyze_voice_input(file_path):
     # --- Part A: Speech-to-Text (English + Malayalam) ---
     recognizer = sr.Recognizer()
     recognizer.energy_threshold = 300
+
+    text = ""
 
     try:
         with sr.AudioFile(file_path) as source:
@@ -100,22 +102,34 @@ def select_song(emotion):
 def play_song(song_path):
     if not os.path.exists(song_path):
         print(f"Song not found ❌: {song_path}")
-        return
+        try:
+            text = recognizer.recognize_google(audio_data, language='en-US')
+            result['text'] = text
+            print(f">> USER SAID (English): {text}")
+        except sr.UnknownValueError:
+            try:
+                text_ml = recognizer.recognize_google(audio_data, language='ml-IN')
+                text = text_ml
+                result['text'] = text_ml
+                print(f">> USER SAID (Malayalam): {text_ml}")
+            except Exception:
+                text = ""
+                print("   [ERROR] Could not understand Audio in English or Malayalam")
+            except sr.RequestError:
+                text = ""
+                print("   [ERROR] No internet connection for speech recognition")
+        except Exception as e:
+            text = ""
+            print(f"   [CRITICAL] Speech Recognition Crashed: {e}")
 
-    pygame.mixer.init()
-    pygame.mixer.music.load(song_path)
-    pygame.mixer.music.play()
-    print(f"Playing song: {song_path}")
+    # Ensure a readable transcription value
+    if text:
+        result['text'] = text
+    else:
+        result['text'] = "No transcription"
 
-    # Wait until song finishes
-    while pygame.mixer.music.get_busy():
-        pygame.time.Clock().tick(10)
-
-# --------------------- MAIN ---------------------
-if __name__ == "__main__":
-    # --- Step 1: Record voice ---
-    import sounddevice as sd
-    from scipy.io.wavfile import write
+    # Always print a clear transcript line for downstream visibility
+    print(f"   [TRANSCRIPT] {result['text']}")
 
     fs = 44100  # Sampling rate
     duration = 5  # seconds
