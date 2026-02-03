@@ -1,7 +1,7 @@
 from flask import Flask, render_template, request, jsonify
 import os
 
-from audio_logic import start_music_therapy
+from audio_logic import start_music_therapy, analyze_voice_input
 import fusion_engine   # teammate's module
 
 app = Flask(__name__)
@@ -26,6 +26,30 @@ def index():
 
 
 # ---------------- FACE EMOTION (Teammate 1) ----------------
+# Restoring the MISSING /detect_face route
+@app.route('/detect_face', methods=['POST'])
+def detect_face():
+    import real_emotion # Local import to avoid circular dependency issues if any
+    
+    if 'face_image' not in request.files:
+        return jsonify({"error": "No face image"}), 400
+    
+    file = request.files['face_image']
+    filepath = os.path.join(UPLOAD_FOLDER, "face_capture.jpg")
+    file.save(filepath)
+
+    # Analyze face
+    emotion, metrics = real_emotion.analyze_face(filepath)
+    
+    # Update Global State
+    current_state['face_emotion'] = emotion
+
+    return jsonify({
+        "status": "success", 
+        "emotion": emotion,
+        "metrics": metrics
+    })
+
 @app.route('/update_face', methods=['POST'])
 def update_face():
     data = request.json
@@ -43,11 +67,24 @@ def process_voice_answer():
     filepath = os.path.join(UPLOAD_FOLDER, "response.wav")
     file.save(filepath)
 
-<<<<<<< HEAD
     # 1. Analyze the Voice
     analysis = analyze_voice_input(filepath)
     
-    # 2. Update State
+    # 2. Analyze the Face (from mid-recording capture)
+    if 'face_data' in request.files:
+        import real_emotion # Local import
+        face_file = request.files['face_data']
+        face_path = os.path.join(UPLOAD_FOLDER, "face_response.jpg")
+        face_file.save(face_path)
+        
+        # Analyze this specific frame
+        face_emo, _ = real_emotion.analyze_face(face_path)
+        print(f"📸 Mid-Recording Face Analysis: {face_emo}")
+        
+        # Update state so Fusion Engine uses THIS emotion
+        current_state['face_emotion'] = face_emo
+    
+    # 2. Update Voice State
     current_state['voice_emotion'] = analysis['emotion']
     
     # Combined Text Logic
@@ -63,7 +100,7 @@ def process_voice_answer():
     current_state['last_spoken_text'] = combined_text
     
     # 3. FUSION LOGIC (New Tri-Modal System)
-    # Get the latest face emotion from the global state
+    # Get the latest face emotion from the global state (which we just updated)
     
     # Construct Face Sensor Data
     face_data = {
@@ -74,8 +111,8 @@ def process_voice_answer():
     # Construct Voice Sensor Data
     voice_data = {
         "emotion": analysis['emotion'],
-        "energy_score": analysis['energy_score'],
-        "pitch_score": analysis['pitch_score']
+        "energy_score": analysis.get('energy_score', 0.0),
+        "pitch_score": analysis.get('pitch_score', 0.0)
     }
     
     # Call the new Fusion Engine with COMBINED text
@@ -87,28 +124,6 @@ def process_voice_answer():
 
     return jsonify({
         "bot_reply": f"I understood: '{combined_text}'.",
-=======
-    # Voice emotion teammate will build later
-    simulated_voice_emotion = "Neutral"
-
-    current_state['voice_emotion'] = simulated_voice_emotion
-    current_state['last_spoken_text'] = "Voice processed"
-
-    # --------- FUSION ENGINE DECIDES FINAL MOOD ----------
-    face_val = current_state['face_emotion']
-    voice_val = simulated_voice_emotion
-
-    fusion_result = fusion_engine.fuse_emotions(face_val, voice_val)
-    current_state['final_mood'] = fusion_result['final_mood']
-
-    print(f"\n🎭 Face: {face_val} | 🎤 Voice: {voice_val} | 🧠 Final Mood: {current_state['final_mood']}")
-
-    # --------- 🎵 YOUR MUSIC THERAPY MODULE RUNS ----------
-    start_music_therapy(current_state['final_mood'])
-
-    return jsonify({
-        "bot_reply": "Music therapy started.",
->>>>>>> 08d7a3ff9b904035e4c07b88592bfc148bb4d581
         "new_mood": current_state['final_mood'],
         "confidence": fusion_result['confidence'],
         "reasoning": fusion_result['reasoning']

@@ -14,10 +14,12 @@ navigator.mediaDevices.getUserMedia({ video: true })
 
 const recordBtn = document.getElementById("recordBtn");
 const statusText = document.getElementById("status");
+// --- GLOBAL AUDIO VARIABLES ---
 let recorder;
 let audioChunks = [];
+let audioStream = null; // Renamed to avoid confusion with video stream
+let isRecording = false;
 let audioContext = new (window.AudioContext || window.webkitAudioContext)();
-let stream = null; // Global stream to fix scope issues
 
 function startFaceDetection() {
     setInterval(async () => {
@@ -55,6 +57,19 @@ function sendFaceToBackend(faceBlob) {
         .then(data => {
             if (data.emotion) {
                 faceEmotionDisplay.innerText = data.emotion;
+
+                // Render Metrics if available
+                if (data.metrics) {
+                    const m = data.metrics;
+                    const html = `
+                        <div><b>Happy (Smile):</b> ${m.smile} <span style="color:${m.smile > 0.015 ? 'green' : 'gray'}">(>0.015)</span></div>
+                        <div><b>Sad (Frown):</b> ${m.smile} <span style="color:${m.smile < -0.002 ? 'green' : 'gray'}">(<-0.002)</span></div>
+                        <div><b>Sad (EyeOpen):</b> ${m.eye_open} <span style="color:${m.eye_open < 0.03 ? 'green' : 'gray'}">(<0.03)</span></div>
+                        <div><b>Surprise (Mouth):</b> ${m.mar} <span style="color:${m.mar > 0.20 ? 'green' : 'gray'}">(>0.20)</span></div>
+                        <div><b>Angry (BrowDist):</b> ${m.glabella} <span style="color:${m.glabella < 0.285 ? 'green' : 'gray'}">(<0.285)</span></div>
+                    `;
+                    document.getElementById("face-metrics").innerHTML = html;
+                }
             }
         })
         .catch(err => console.error("Face detection error:", err));
@@ -115,8 +130,7 @@ function bufferToWave(abuffer, len) {
     }
 }
 
-let isRecording = false;
-
+// Toggle Button Logic
 recordBtn.onclick = () => {
     if (isRecording) {
         stopRecording();
@@ -133,16 +147,17 @@ async function startRecording() {
         }
 
         // 1. Request Microphone Access
-        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        // IMPORTANT: Assign to GLOBAL audioStream, do not use 'const'
+        audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
 
-        recorder = new MediaRecorder(stream);
+        recorder = new MediaRecorder(audioStream);
         audioChunks = []; // Reset chunks
 
         recorder.ondataavailable = e => audioChunks.push(e.data);
 
         // Define what happens when recording stops
         recorder.onstop = async () => {
-            isRecording = false; // Ensure state is updated
+            isRecording = false;
             statusText.innerText = "Processing audio...";
             recordBtn.innerText = "Record Answer";
             recordBtn.classList.remove("recording-active");
@@ -201,14 +216,13 @@ function stopRecording() {
     // Only stop if the recorder exists and is active
     if (recorder && recorder.state !== "inactive") {
         recorder.stop();
-        console.log("Recorder stopped");
-    }
 
-    // IMPORTANT: Stop all tracks in the stream to turn off the mic light
-    if (stream) {
-        stream.getTracks().forEach(track => track.stop());
-        stream = null; // Clear the stream
-        console.log("Stream tracks stopped");
+        // IMPORTANT: Stop all tracks in the stream to turn off the mic light
+        if (audioStream) {
+            audioStream.getTracks().forEach(track => track.stop());
+        }
+
+        console.log("Recording stopped.");
     }
 }
 
