@@ -60,112 +60,94 @@ def get_emotion(landmarks):
     
     center_y = (top_lip[1] + bottom_lip[1]) / 2
     corners_y = (left_corner[1] + right_corner[1]) / 2
-    
     smile_val = center_y - corners_y 
-    
-    # Threshold for Happy
-    if smile_val > 0.015:  # Slightly more sensitive
-        return f"Happy: Corners lifted ({smile_val:.3f})"
 
-    # 2. SURPRISE: Mouth Aspect Ratio (MAR) + Eyebrow Raise
-    
+    # --- 2. SURPRISE (Mouth Aspect Ratio) ---
     mouth_width = calculate_distance(left_corner, right_corner)
     mouth_height = calculate_distance(top_lip, bottom_lip)
-    
     if mouth_width == 0: mouth_width = 0.001
     mar = mouth_height / mouth_width
-    
-    # Eyebrow Raise check relative to eyes
+
+    # --- Eyebrow Raise (Shared by Surprise & Angry) ---
     l_eye_top = get_pt(159)
     r_eye_top = get_pt(386)
-    
     l_brow_raise = calculate_distance(l_eye_top, l_brow_mid)
     r_brow_raise = calculate_distance(r_eye_top, r_brow_mid)
     avg_brow_raise = (l_brow_raise + r_brow_raise) / 2
 
-    # Lowered MAR threshold from 0.5 to 0.3 for "subtle" surprise
-    # Lowered brow raise slightly
-    if mar > 0.20 and avg_brow_raise > 0.04: 
-        return f"Surprised: Mouth open ({mar:.2f})"
-
-    # 3. ANGRY: Glabella Distance (Inter-Brow)
-    
+    # --- 3. ANGRY (Glabella) ---
     glabella_dist = calculate_distance(l_brow_inner, r_brow_inner)
-    
     l_eye_outer = get_pt(33)
     r_eye_outer = get_pt(263)
     face_width = calculate_distance(l_eye_outer, r_eye_outer)
     if face_width == 0: face_width = 0.001
-    
     norm_glabella = glabella_dist / face_width
-    
-    # Relaxed thresholds for "Subtle" Anger
-    # User Baseline Glabella: ~0.29
-    # New Target: < 0.285 (Very sensitive, almost neutral)
-    # Increased avg_brow_raise limit to 0.1 to allow for natural brow position
-    if norm_glabella < 0.285: 
-         if avg_brow_raise < 0.1: # Brows low/normal
-             return f"Angry: Brows squeezed ({norm_glabella:.3f})"
 
-<<<<<<< HEAD
-    # 4. SAD: Micro-Frown
-    # Corners lower than center. (smile_val is negative).
-    # Made more sensitive (closer to 0).
-    
-    if smile_val < -0.000: # Very subtle frown
-        return f"Sad: Corners down ({smile_val:.3f})"
-=======
-    # 4. SAD: Micro-Frown or Droopy Eyes
-    # Corners lower than center (frown) or eyes partially closed/droopy -> Sad
-    # Use normalized eye opening to detect droopy/closed eyes (scale-invariant)
-
-    # Eye landmarks (top/bottom) for left/right
-    l_eye_top = get_pt(159)
+    # --- 4. SAD (Eye Openness) ---
     l_eye_bottom = get_pt(145)
-    r_eye_top = get_pt(386)
     r_eye_bottom = get_pt(374)
-
     left_eye_open = calculate_distance(l_eye_top, l_eye_bottom)
     right_eye_open = calculate_distance(r_eye_top, r_eye_bottom)
     avg_eye_open = (left_eye_open + right_eye_open) / 2
-
-    # Normalize by face width for scale invariance
-    if face_width == 0: face_width = 0.001
     norm_eye_open = avg_eye_open / face_width
 
-    # More sensitive smile_val threshold and an eye-opening threshold
-    if smile_val < -0.003 or norm_eye_open < 0.025:
-        return f"Sad: Corners down ({smile_val:.3f}), EyeOpen:{norm_eye_open:.3f}"
->>>>>>> main
+    # --- COLLECT METRICS ---
+    metrics = {
+        "smile": round(smile_val, 4),
+        "mar": round(mar, 3),
+        "brow_raise": round(avg_brow_raise, 3),
+        "glabella": round(norm_glabella, 3),
+        "eye_open": round(norm_eye_open, 3)
+    }
 
-    # 5. NEUTRAL - Return debug info to help user trigger emotions
-    return f"Neutral (Glab:{norm_glabella:.2f}, Brow:{avg_brow_raise:.2f}, Smile:{smile_val:.3f})"
+    # --- LOGIC TRESHOLDS ---
+    print(f"[FACE DEBUG] Smile: {smile_val}, Brow: {avg_brow_raise}, Glabella: {norm_glabella}")
+    
+    # 1. HAPPY (Smile > 0.005) - Lowered from 0.015
+    if smile_val > 0.005:
+        return f"Happy: Corners lifted", metrics
+
+    # 2. SURPRISE (MAR > 0.20, Brows > 0.04)
+    if mar > 0.20 and avg_brow_raise > 0.04: 
+        return f"Surprised: Mouth open", metrics
+
+    # 3. ANGRY (Glabella < 0.285, Brows < 0.1)
+    if norm_glabella < 0.285: 
+         if avg_brow_raise < 0.1:
+             return f"Angry: Brows squeezed", metrics
+
+    # 4. SAD (Smile < -0.002 or Eyes < 0.03)
+    if smile_val < -0.002 or norm_eye_open < 0.03:
+        return f"Sad: Corners down", metrics
+
+    # 5. NEUTRAL
+    return f"Neutral", metrics
 
 def analyze_face(image_path):
     """
-    Analyzes the face image at the given path and returns an estimated emotion.
+    Analyzes the face image at the given path and returns an estimated emotion AND metrics.
     Used by app.py.
     """
     try:
         image = cv2.imread(image_path)
         if image is None:
-            return "Neutral"
+            return "Neutral", {}
 
         # Convert the BGR image to RGB before processing.
         results = face_mesh_module.process(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
 
         if not results.multi_face_landmarks:
-            return "No Face Detected"
+            return "No Face Detected", {}
 
         landmarks = results.multi_face_landmarks[0].landmark
         
-        emotion_text = get_emotion(landmarks)
-        # Return full text with debug info for now
-        return emotion_text
+        emotion_text, metrics = get_emotion(landmarks)
+        
+        return emotion_text, metrics
 
     except Exception as e:
         print(f"Error in analyze_face: {e}")
-        return "Neutral"
+        return "Neutral", {}
 
 def detect_emotion_video():
     """
