@@ -107,12 +107,36 @@ def get_emotion(landmarks):
          if avg_brow_raise < 0.1: # Brows low/normal
              return f"Angry: Brows squeezed ({norm_glabella:.3f})"
 
+<<<<<<< HEAD
     # 4. SAD: Micro-Frown
     # Corners lower than center. (smile_val is negative).
     # Made more sensitive (closer to 0).
     
     if smile_val < -0.000: # Very subtle frown
         return f"Sad: Corners down ({smile_val:.3f})"
+=======
+    # 4. SAD: Micro-Frown or Droopy Eyes
+    # Corners lower than center (frown) or eyes partially closed/droopy -> Sad
+    # Use normalized eye opening to detect droopy/closed eyes (scale-invariant)
+
+    # Eye landmarks (top/bottom) for left/right
+    l_eye_top = get_pt(159)
+    l_eye_bottom = get_pt(145)
+    r_eye_top = get_pt(386)
+    r_eye_bottom = get_pt(374)
+
+    left_eye_open = calculate_distance(l_eye_top, l_eye_bottom)
+    right_eye_open = calculate_distance(r_eye_top, r_eye_bottom)
+    avg_eye_open = (left_eye_open + right_eye_open) / 2
+
+    # Normalize by face width for scale invariance
+    if face_width == 0: face_width = 0.001
+    norm_eye_open = avg_eye_open / face_width
+
+    # More sensitive smile_val threshold and an eye-opening threshold
+    if smile_val < -0.003 or norm_eye_open < 0.025:
+        return f"Sad: Corners down ({smile_val:.3f}), EyeOpen:{norm_eye_open:.3f}"
+>>>>>>> main
 
     # 5. NEUTRAL - Return debug info to help user trigger emotions
     return f"Neutral (Glab:{norm_glabella:.2f}, Brow:{avg_brow_raise:.2f}, Smile:{smile_val:.3f})"
