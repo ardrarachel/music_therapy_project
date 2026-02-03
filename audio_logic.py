@@ -1,8 +1,12 @@
 import os
+<<<<<<< HEAD
+import socket
+=======
 import random
 import pygame
 import time
 import threading
+>>>>>>> 08d7a3ff9b904035e4c07b88592bfc148bb4d581
 
 import os
 BASE_PATH = os.path.join(os.getcwd(), "audio", "malayalam")
@@ -24,6 +28,27 @@ def analyze_voice_input(file_path):
         "energy_score": 0.0,
         "pitch_score": 0.0
     }
+<<<<<<< HEAD
+    
+    # --- PART A: SPEECH TO TEXT (Dual Language Support) ---
+    recognizer = sr.Recognizer()
+    # recognizer.energy_threshold = 300  <-- REMOVED: Let it be dynamic
+    recognizer.dynamic_energy_threshold = True 
+    recognizer.dynamic_energy_adjustment_damping = 0.15 
+    
+    try:
+        with sr.AudioFile(file_path) as source:
+            audio_data = recognizer.record(source)
+            print("   [Log] Connecting to Google API...")
+            
+            # Set a timeout for the API call to prevent hanging
+            socket.setdefaulttimeout(3.0)
+            
+            try:
+                # 1. Try English
+                text = recognizer.recognize_google(audio_data, language='en-US')
+                print(f">> USER SAID: \"{text}\"")
+=======
 >>>>>>> main
 
 ISO_FLOW = {
@@ -43,9 +68,25 @@ ISO_FLOW = {
             audio_data = recognizer.record(source)
             try:
                 text = recognizer.recognize_google(audio_data, language='en-US')
+>>>>>>> 08d7a3ff9b904035e4c07b88592bfc148bb4d581
                 result['text'] = text
                 print(f">> USER SAID (English): {text}")
             except sr.UnknownValueError:
+<<<<<<< HEAD
+                print("   [ERROR] Could not understand Audio.")
+                    
+            except (sr.RequestError, socket.timeout) as e:
+                 print(f"   [ERROR] Connection/API Issue: {e}")
+                 result['text'] = "(Voice Only - Offline)"
+
+            finally:
+                # CRITICAL: Reset timeout to default (None) so we don't affect other parts of the app
+                socket.setdefaulttimeout(None)
+
+    except Exception as e:
+        print(f"   [CRITICAL] Speech Recognition Crashed: {e}")
+        socket.setdefaulttimeout(None) # Safety reset
+=======
                 try:
                     text_ml = recognizer.recognize_google(audio_data, language='ml-IN')
                     result['text'] = text_ml
@@ -70,6 +111,7 @@ def load_songs(folder):
     songs = [os.path.join(folder, f) for f in os.listdir(folder) if f.endswith(".mp3")]
     print(f"🎵 Found songs: {songs}")
     return songs
+>>>>>>> 08d7a3ff9b904035e4c07b88592bfc148bb4d581
 
 
 
@@ -82,12 +124,31 @@ def build_iso_playlist(start_emotion):
         if songs:
             playlist.append(random.choice(songs))
 
+<<<<<<< HEAD
+        # --- EXPERT RULES ---
+        
+        # Rule 1: Silence
+        if energy < 0.02: 
+            result['emotion'] = "Neutral" 
+            print("   [LOGIC] Ignored as Background Noise")
+
+        # Rule 2: High Energy (Loud)
+        elif energy > 0.25: # Raised significantly to 0.25
+            if pitch_var > 0.05: result['emotion'] = "Excited"
+            else: result['emotion'] = "Anger"
+
+        # Rule 3: Normal Energy (Talking)
+        elif energy > 0.10: 
+            if pitch_var > 0.11: result['emotion'] = "Happy" # Very strict pitch requirement
+            else: result['emotion'] = "Neutral"
+=======
     print("🎶 Playlist:", playlist)
     return playlist
 
 
 def play_playlist_thread(playlist):
     init_player()
+>>>>>>> 08d7a3ff9b904035e4c07b88592bfc148bb4d581
 
     for song in playlist:
         print(f"▶ Playing: {song}")
