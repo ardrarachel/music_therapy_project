@@ -2,6 +2,7 @@ import librosa
 import numpy as np
 import speech_recognition as sr
 import os
+import socket
 
 def analyze_voice_input(file_path):
     result = {
@@ -13,34 +14,38 @@ def analyze_voice_input(file_path):
     
     # --- PART A: SPEECH TO TEXT (Dual Language Support) ---
     recognizer = sr.Recognizer()
-    recognizer.energy_threshold = 300 
+    # recognizer.energy_threshold = 300  <-- REMOVED: Let it be dynamic
+    recognizer.dynamic_energy_threshold = True 
+    recognizer.dynamic_energy_adjustment_damping = 0.15 
     
     try:
         with sr.AudioFile(file_path) as source:
             audio_data = recognizer.record(source)
             print("   [Log] Connecting to Google API...")
             
+            # Set a timeout for the API call to prevent hanging
+            socket.setdefaulttimeout(3.0)
+            
             try:
-                # 1. Try English First
+                # 1. Try English
                 text = recognizer.recognize_google(audio_data, language='en-US')
-                print(f">> USER SAID (English): \"{text}\"")
+                print(f">> USER SAID: \"{text}\"")
                 result['text'] = text
                 
             except sr.UnknownValueError:
-                # 2. If English fails, Try Malayalam
-                print("   [Log] English failed, trying Malayalam...")
-                try:
-                    text_ml = recognizer.recognize_google(audio_data, language='ml-IN')
-                    print(f">> USER SAID (Malayalam): \"{text_ml}\"")
-                    result['text'] = text_ml
-                except:
-                    print("   [ERROR] Could not understand Audio in Eng or Mal.")
+                print("   [ERROR] Could not understand Audio.")
                     
-            except sr.RequestError:
-                 print("   [ERROR] No Internet Connection.")
+            except (sr.RequestError, socket.timeout) as e:
+                 print(f"   [ERROR] Connection/API Issue: {e}")
+                 result['text'] = "(Voice Only - Offline)"
+
+            finally:
+                # CRITICAL: Reset timeout to default (None) so we don't affect other parts of the app
+                socket.setdefaulttimeout(None)
 
     except Exception as e:
         print(f"   [CRITICAL] Speech Recognition Crashed: {e}")
+        socket.setdefaulttimeout(None) # Safety reset
 
 
     # --- PART B: PHYSICS & EMOTION LOGIC ---
@@ -68,18 +73,18 @@ def analyze_voice_input(file_path):
         # --- EXPERT RULES ---
         
         # Rule 1: Silence
-        if energy < 0.015: 
+        if energy < 0.02: 
             result['emotion'] = "Neutral" 
             print("   [LOGIC] Ignored as Background Noise")
 
         # Rule 2: High Energy (Loud)
-        elif energy > 0.08:
+        elif energy > 0.25: # Raised significantly to 0.25
             if pitch_var > 0.05: result['emotion'] = "Excited"
             else: result['emotion'] = "Anger"
 
         # Rule 3: Normal Energy (Talking)
-        elif energy > 0.02: 
-            if pitch_var > 0.06: result['emotion'] = "Happy"
+        elif energy > 0.10: 
+            if pitch_var > 0.11: result['emotion'] = "Happy" # Very strict pitch requirement
             else: result['emotion'] = "Neutral"
 
         # Rule 4: Low Energy (Quiet)

@@ -17,6 +17,7 @@ const statusText = document.getElementById("status");
 let recorder;
 let audioChunks = [];
 let audioContext = new (window.AudioContext || window.webkitAudioContext)();
+let stream = null; // Global stream to fix scope issues
 
 function startFaceDetection() {
     setInterval(async () => {
@@ -114,29 +115,41 @@ function bufferToWave(abuffer, len) {
     }
 }
 
-recordBtn.onclick = async () => {
+let isRecording = false;
+
+recordBtn.onclick = () => {
+    if (isRecording) {
+        stopRecording();
+    } else {
+        startRecording();
+    }
+};
+
+async function startRecording() {
     try {
         // Resume context if suspended
         if (audioContext.state === 'suspended') {
             await audioContext.resume();
         }
 
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        recorder = new MediaRecorder(stream);
-        audioChunks = [];
+        // 1. Request Microphone Access
+        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
 
-        recorder.start();
-        statusText.innerText = "Listening...";
-        recordBtn.disabled = true;
+        recorder = new MediaRecorder(stream);
+        audioChunks = []; // Reset chunks
 
         recorder.ondataavailable = e => audioChunks.push(e.data);
 
+        // Define what happens when recording stops
         recorder.onstop = async () => {
+            isRecording = false; // Ensure state is updated
             statusText.innerText = "Processing audio...";
+            recordBtn.innerText = "Record Answer";
+            recordBtn.classList.remove("recording-active");
+            recordBtn.disabled = true;
 
             // 1. Get WebM/Ogg Blob
             const webmBlob = new Blob(audioChunks, { type: 'audio/webm' });
-            // Note: 'audio/webm' is typical default, hopefully browser supports it or 'audio/ogg'
 
             // 2. Convert to ArrayBuffer
             const arrayBuffer = await webmBlob.arrayBuffer();
@@ -159,22 +172,54 @@ recordBtn.onclick = async () => {
             }
         };
 
+        // Start Recording
+        recorder.start();
+        isRecording = true;
+
+        // UI Updates
+        statusText.innerText = "Listening... (Click to Stop)";
+        recordBtn.innerText = "Stop Listening";
+        recordBtn.classList.add("recording-active");
+
+        // Safety Timeout (6 seconds max)
         setTimeout(() => {
-            recorder.stop();
-            // Stop stream tracks
-            stream.getTracks().forEach(track => track.stop());
-        }, 5000);
+            if (isRecording) {
+                stopRecording();
+            }
+        }, 6000);
 
     } catch (err) {
-        console.error(err);
-        alert("Microphone access denied or error: " + err.message);
+        console.error("Microphone Error:", err);
+        statusText.innerText = "⚠️ Mic Access Denied";
+        alert("Please allow microphone access to use this feature.\nError: " + err.message);
         recordBtn.disabled = false;
+        isRecording = false;
     }
-};
+}
+
+function stopRecording() {
+    // Only stop if the recorder exists and is active
+    if (recorder && recorder.state !== "inactive") {
+        recorder.stop();
+        console.log("Recorder stopped");
+    }
+
+    // IMPORTANT: Stop all tracks in the stream to turn off the mic light
+    if (stream) {
+        stream.getTracks().forEach(track => track.stop());
+        stream = null; // Clear the stream
+        console.log("Stream tracks stopped");
+    }
+}
 
 function sendAudioToBackend(audioBlob, faceBlob) {
     const formData = new FormData();
     formData.append("audio_data", audioBlob, "response.wav"); // Explicit filename
+
+    // Add typed text if available
+    const typedText = document.getElementById("userText").value;
+    formData.append("typed_text", typedText);
+
     if (faceBlob) {
         formData.append("face_data", faceBlob);
     }

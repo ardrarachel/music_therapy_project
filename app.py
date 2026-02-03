@@ -65,21 +65,44 @@ def process_voice_answer():
     
     # 2. Update State
     current_state['voice_emotion'] = analysis['emotion']
-    current_state['last_spoken_text'] = analysis['text']
     
-    # 3. FUSION LOGIC (New Expert System)
+    # Combined Text Logic
+    typed_text = request.form.get('typed_text', '')
+    voice_text = analysis['text']
+    
+    # Normalize: If voice failed, don't include "(Voice Only)" in the fusion text
+    if "Voice Only" in voice_text:
+        combined_text = typed_text
+    else:
+        combined_text = f"{typed_text} {voice_text}".strip()
+        
+    current_state['last_spoken_text'] = combined_text
+    
+    # 3. FUSION LOGIC (New Tri-Modal System)
     # Get the latest face emotion from the global state
-    face_val = current_state['face_emotion']
-    voice_val = analysis['emotion']
     
-    fusion_result = fusion_engine.fuse_emotions(face_val, voice_val)
+    # Construct Face Sensor Data
+    face_data = {
+        "emotion": current_state['face_emotion'],
+        "confidence": 0.65  # Hardcoded heuristic baseline for now
+    }
+    
+    # Construct Voice Sensor Data
+    voice_data = {
+        "emotion": analysis['emotion'],
+        "energy_score": analysis['energy_score'],
+        "pitch_score": analysis['pitch_score']
+    }
+    
+    # Call the new Fusion Engine with COMBINED text
+    fusion_result = fusion_engine.fuse_multimodal_sensors(face_data, voice_data, combined_text)
     
     current_state['final_mood'] = fusion_result['final_mood']
     
-    print(f"🗣️ User Said: '{analysis['text']}' | Fused Mood: {current_state['final_mood']}")
+    print(f"🗣️ User Input: '{combined_text}' | Fused Mood: {current_state['final_mood']}")
 
     return jsonify({
-        "bot_reply": f"I heard you say '{analysis['text']}'.",
+        "bot_reply": f"I understood: '{combined_text}'.",
         "new_mood": current_state['final_mood'],
         "confidence": fusion_result['confidence'],
         "reasoning": fusion_result['reasoning']
