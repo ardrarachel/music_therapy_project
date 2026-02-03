@@ -1,22 +1,24 @@
 import cv2
-import mediapipe as mp
 import math
+import mediapipe as mp
 
-# Use try-except for robust import across different environments
+# Direct access to the internal modules to bypass the "solutions" error
 try:
-    from mediapipe.python.solutions import face_mesh
+    from mediapipe.python.solutions import face_mesh as mp_face_mesh
+    from mediapipe.python.solutions import drawing_utils as mp_drawing
 except ImportError:
-    mp_face_mesh = mp.solutions.face_mesh
-    face_mesh = mp_face_mesh
+    # Fallback for newer MediaPipe structures
+    import mediapipe.solutions.face_mesh as mp_face_mesh
+    import mediapipe.solutions.drawing_utils as mp_drawing
 
-# Initialize MediaPipe Face Mesh
-mp_face_mesh = mp.solutions.face_mesh
+# Initialize using the direct reference
 face_mesh_module = mp_face_mesh.FaceMesh(
+    static_image_mode=False,
     max_num_faces=1,
-    refine_landmarks=True,
-    min_detection_confidence=0.3, # Lowered from 0.5 for better detection
-    min_tracking_confidence=0.3
+    min_detection_confidence=0.5,
+    min_tracking_confidence=0.5
 )
+
 
 def calculate_distance(point1, point2):
     """
@@ -83,7 +85,7 @@ def get_emotion(landmarks):
 
     # Lowered MAR threshold from 0.5 to 0.3 for "subtle" surprise
     # Lowered brow raise slightly
-    if mar > 0.25 and avg_brow_raise > 0.04: 
+    if mar > 0.20 and avg_brow_raise > 0.04: 
         return f"Surprised: Mouth open ({mar:.2f})"
 
     # 3. ANGRY: Glabella Distance (Inter-Brow)
@@ -105,12 +107,36 @@ def get_emotion(landmarks):
          if avg_brow_raise < 0.1: # Brows low/normal
              return f"Angry: Brows squeezed ({norm_glabella:.3f})"
 
+<<<<<<< HEAD
     # 4. SAD: Micro-Frown
     # Corners lower than center. (smile_val is negative).
     # Made more sensitive (closer to 0).
     
-    if smile_val < -0.005: # Very subtle frown
+    if smile_val < -0.000: # Very subtle frown
         return f"Sad: Corners down ({smile_val:.3f})"
+=======
+    # 4. SAD: Micro-Frown or Droopy Eyes
+    # Corners lower than center (frown) or eyes partially closed/droopy -> Sad
+    # Use normalized eye opening to detect droopy/closed eyes (scale-invariant)
+
+    # Eye landmarks (top/bottom) for left/right
+    l_eye_top = get_pt(159)
+    l_eye_bottom = get_pt(145)
+    r_eye_top = get_pt(386)
+    r_eye_bottom = get_pt(374)
+
+    left_eye_open = calculate_distance(l_eye_top, l_eye_bottom)
+    right_eye_open = calculate_distance(r_eye_top, r_eye_bottom)
+    avg_eye_open = (left_eye_open + right_eye_open) / 2
+
+    # Normalize by face width for scale invariance
+    if face_width == 0: face_width = 0.001
+    norm_eye_open = avg_eye_open / face_width
+
+    # More sensitive smile_val threshold and an eye-opening threshold
+    if smile_val < -0.003 or norm_eye_open < 0.025:
+        return f"Sad: Corners down ({smile_val:.3f}), EyeOpen:{norm_eye_open:.3f}"
+>>>>>>> main
 
     # 5. NEUTRAL - Return debug info to help user trigger emotions
     return f"Neutral (Glab:{norm_glabella:.2f}, Brow:{avg_brow_raise:.2f}, Smile:{smile_val:.3f})"

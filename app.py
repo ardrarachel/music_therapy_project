@@ -1,17 +1,17 @@
 from flask import Flask, render_template, request, jsonify
 import os
-from audio_logic import analyze_voice_input
-import real_emotion
-import fusion_engine
+
+from audio_logic import start_music_therapy
+import fusion_engine   # teammate's module
 
 app = Flask(__name__)
 
-# Config
+# Folder to temporarily store audio & images
 UPLOAD_FOLDER = 'temp_audio'
 if not os.path.exists(UPLOAD_FOLDER):
     os.makedirs(UPLOAD_FOLDER)
 
-# Global State
+# Shared System State
 current_state = {
     "face_emotion": "Neutral",
     "voice_emotion": "Neutral",
@@ -19,47 +19,31 @@ current_state = {
     "final_mood": "Neutral"
 }
 
+# ---------------- HOME PAGE ----------------
 @app.route('/')
 def index():
     return render_template('index.html')
 
-# --- ROUTE FOR MEMBER 1 (Camera) ---
-# Updated to receive actual image data from frontend loop
-@app.route('/detect_face', methods=['POST'])
-def detect_face():
-    if 'face_image' not in request.files:
-        return jsonify({"error": "No face image"}), 400
-    
-    file = request.files['face_image']
-    filepath = os.path.join(UPLOAD_FOLDER, "face_capture.jpg")
-    file.save(filepath)
 
-    # Analyze face
-    emotion = real_emotion.analyze_face(filepath)
-    
-    # Update Global State
-    current_state['face_emotion'] = emotion
-
-    return jsonify({"status": "success", "emotion": emotion})
-
+# ---------------- FACE EMOTION (Teammate 1) ----------------
 @app.route('/update_face', methods=['POST'])
 def update_face():
-    # Keep old route for backward compatibility if needed, or redirect logic
     data = request.json
     current_state['face_emotion'] = data.get('emotion', 'Neutral')
-    return jsonify({"status": "updated"})
+    return jsonify({"status": "face emotion updated"})
 
-# --- ROUTE FOR MEMBER 2 (Your Audio Logic) ---
+
+# ---------------- VOICE + MUSIC THERAPY (YOUR PART) ----------------
 @app.route('/process_voice_answer', methods=['POST'])
 def process_voice_answer():
     if 'audio_data' not in request.files:
         return jsonify({"error": "No audio"}), 400
 
     file = request.files['audio_data']
-    # Save as WAV (Make sure frontend sends WAV blob)
     filepath = os.path.join(UPLOAD_FOLDER, "response.wav")
     file.save(filepath)
 
+<<<<<<< HEAD
     # 1. Analyze the Voice
     analysis = analyze_voice_input(filepath)
     
@@ -103,10 +87,35 @@ def process_voice_answer():
 
     return jsonify({
         "bot_reply": f"I understood: '{combined_text}'.",
+=======
+    # Voice emotion teammate will build later
+    simulated_voice_emotion = "Neutral"
+
+    current_state['voice_emotion'] = simulated_voice_emotion
+    current_state['last_spoken_text'] = "Voice processed"
+
+    # --------- FUSION ENGINE DECIDES FINAL MOOD ----------
+    face_val = current_state['face_emotion']
+    voice_val = simulated_voice_emotion
+
+    fusion_result = fusion_engine.fuse_emotions(face_val, voice_val)
+    current_state['final_mood'] = fusion_result['final_mood']
+
+    print(f"\n🎭 Face: {face_val} | 🎤 Voice: {voice_val} | 🧠 Final Mood: {current_state['final_mood']}")
+
+    # --------- 🎵 YOUR MUSIC THERAPY MODULE RUNS ----------
+    start_music_therapy(current_state['final_mood'])
+
+    return jsonify({
+        "bot_reply": "Music therapy started.",
+>>>>>>> 08d7a3ff9b904035e4c07b88592bfc148bb4d581
         "new_mood": current_state['final_mood'],
         "confidence": fusion_result['confidence'],
         "reasoning": fusion_result['reasoning']
     })
 
+
+# ---------------- RUN SERVER ----------------
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(debug=False)
+
