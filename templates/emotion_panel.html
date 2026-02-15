@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Emotion Panel</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: #f2f7ff;
+            text-align: center;
+            padding: 40px;
+            margin: 0;
+        }
+        .panel {
+            background: white;
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+            display: inline-block;
+            border: 2px solid #2b4eff;
+        }
+        .emotion {
+            font-size: 28px;
+            margin-top: 15px;
+            font-weight: bold;
+            color: #2b4eff;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="panel">
+        <h2>Detected Emotion</h2>
+        <div id="emotionText" class="emotion">Waiting for input...</div>
+
+        <!-- YouTube playlist player -->
+        <iframe 
+            id="player"
+            width="320"
+            height="180"
+            src=""
+            style="border:none; margin-top:20px;">
+        </iframe>
+    </div>
+
+<script>
+
+function updateEmotion(emotion) {
+    document.getElementById("emotionText").innerText = emotion;
+    loadPlaylist(emotion);
+}
+
+/* Emotion → YouTube playlist */
+function loadPlaylist(emotion) {
+
+    let playlists = {
+        happy: "https://www.youtube.com/embed/videoseries?list=PLFgquLnL59alCl_2TQvOiD5Vgm1hCaGSI",
+        sad: "https://www.youtube.com/embed/videoseries?list=PLFgquLnL59amEA53wW2O1Rxtj8pYjK9mY",
+        angry: "https://www.youtube.com/embed/videoseries?list=PLFgquLnL59amluHfQxE1cQ6eK9r4W2KI1",
+        calm: "https://www.youtube.com/embed/videoseries?list=PLFgquLnL59alW3xmYiWRaoz0oM3H17Lth"
+    };
+
+    emotion = emotion.toLowerCase();
+
+    if (playlists[emotion]) {
+        document.getElementById("player").src = playlists[emotion];
+    }
+}
+
+/* Receive emotion from parent page */
+window.addEventListener("message", function(event) {
+    if (event.data.type === "emotion") {
+        updateEmotion(event.data.value);
+    }
+});
+
+/* Fallback from localStorage */
+setInterval(() => {
+    let storedEmotion = localStorage.getItem("emotion");
+    if (storedEmotion) {
+        updateEmotion(storedEmotion);
+    }
+}, 1000);
+
+</script>
+</body>
+</html>

@@ -1,5 +1,6 @@
 const video = document.getElementById("video");
 const faceEmotionDisplay = document.getElementById("emotion");
+const musicPlayer = document.getElementById("musicPlayer");
 
 navigator.mediaDevices.getUserMedia({ video: true })
     .then(stream => {
@@ -11,14 +12,32 @@ navigator.mediaDevices.getUserMedia({ video: true })
         alert("Camera access denied. Please allow camera access for emotion detection.");
     });
 
-
 const recordBtn = document.getElementById("recordBtn");
 const statusText = document.getElementById("status");
+
 let recorder;
 let audioChunks = [];
 let audioContext = new (window.AudioContext || window.webkitAudioContext)();
-let stream = null; // Global stream to fix scope issues
+let stream = null;
 
+// 🎵 SPOTIFY PLAYLISTS FOR EACH EMOTION
+const emotionPlaylists = {
+    Happy: "https://open.spotify.com/embed/playlist/37i9dQZF1DXdPec7aLTmlC",
+    Sadness: "https://open.spotify.com/embed/playlist/37i9dQZF1DX7qK8ma5wgG1",
+    Anger: "https://open.spotify.com/embed/playlist/37i9dQZF1DWYxwmBaMqxsl",
+    Excited: "https://open.spotify.com/embed/playlist/37i9dQZF1DX1g0iEXLFycr",
+    Calm: "https://open.spotify.com/embed/playlist/37i9dQZF1DX4sWSpwq3LiO",
+    Neutral: "https://open.spotify.com/embed/playlist/37i9dQZF1DX4WYpdgoIcn6"
+};
+
+function playEmotionMusic(emotion) {
+    const playlist = emotionPlaylists[emotion] || emotionPlaylists["Neutral"];
+    musicPlayer.outerHTML =
+        `<iframe id="musicPlayer" src="${playlist}" width="100%" height="120"
+        frameborder="0" allow="autoplay; clipboard-write; encrypted-media; fullscreen"></iframe>`;
+}
+
+// ---------------- FACE DETECTION ----------------
 function startFaceDetection() {
     setInterval(async () => {
         const faceBlob = await captureFaceFrame();
@@ -60,169 +79,77 @@ function sendFaceToBackend(faceBlob) {
         .catch(err => console.error("Face detection error:", err));
 }
 
-// --- WAV ENCODING HELPERS ---
-function bufferToWave(abuffer, len) {
-    let numOfChan = abuffer.numberOfChannels,
-        length = len * numOfChan * 2 + 44,
-        buffer = new ArrayBuffer(length),
-        view = new DataView(buffer),
-        channels = [], i, sample,
-        offset = 0,
-        pos = 0;
-
-    // write WAVE header
-    setUint32(0x46464952);                         // "RIFF"
-    setUint32(length - 8);                         // file length - 8
-    setUint32(0x45564157);                         // "WAVE"
-
-    setUint32(0x20746d66);                         // "fmt " chunk
-    setUint32(16);                                 // length = 16
-    setUint16(1);                                  // PCM (uncompressed)
-    setUint16(numOfChan);
-    setUint32(abuffer.sampleRate);
-    setUint32(abuffer.sampleRate * 2 * numOfChan); // avg. bytes/sec
-    setUint16(numOfChan * 2);                      // block-align
-    setUint16(16);                                 // 16-bit (hardcoded in this example)
-
-    setUint32(0x61746164);                         // "data" - chunk
-    setUint32(length - pos - 4);                   // chunk length
-
-    // write interleaved data
-    for (i = 0; i < abuffer.numberOfChannels; i++)
-        channels.push(abuffer.getChannelData(i));
-
-    while (pos < len) {
-        for (i = 0; i < numOfChan; i++) {             // interleave channels
-            sample = Math.max(-1, Math.min(1, channels[i][offset])); // clamp
-            sample = (0.5 + sample < 0 ? sample * 32768 : sample * 32767) | 0; // scale to 16-bit signed int
-            view.setInt16(pos, sample, true);          // write 16-bit sample
-            pos += 2;
-        }
-        offset++;                                     // next source sample
-    }
-
-    // create Blob
-    return new Blob([buffer], { type: "audio/wav" });
-
-    function setUint16(data) {
-        view.setUint16(pos, data, true);
-        pos += 2;
-    }
-
-    function setUint32(data) {
-        view.setUint32(pos, data, true);
-        pos += 4;
-    }
-}
-
+// ---------------- RECORDING ----------------
 let isRecording = false;
 
 recordBtn.onclick = () => {
-    if (isRecording) {
-        stopRecording();
-    } else {
-        startRecording();
-    }
+    if (isRecording) stopRecording();
+    else startRecording();
 };
 
 async function startRecording() {
     try {
-        // Resume context if suspended
         if (audioContext.state === 'suspended') {
             await audioContext.resume();
         }
 
-        // 1. Request Microphone Access
         stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-
         recorder = new MediaRecorder(stream);
-        audioChunks = []; // Reset chunks
+        audioChunks = [];
 
         recorder.ondataavailable = e => audioChunks.push(e.data);
 
-        // Define what happens when recording stops
         recorder.onstop = async () => {
-            isRecording = false; // Ensure state is updated
+            isRecording = false;
             statusText.innerText = "Processing audio...";
             recordBtn.innerText = "Record Answer";
-            recordBtn.classList.remove("recording-active");
             recordBtn.disabled = true;
 
-            // 1. Get WebM/Ogg Blob
             const webmBlob = new Blob(audioChunks, { type: 'audio/webm' });
-
-            // 2. Convert to ArrayBuffer
             const arrayBuffer = await webmBlob.arrayBuffer();
+            const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+            const wavBlob = bufferToWave(audioBuffer, audioBuffer.length);
 
-            // 3. Decode to AudioBuffer (PCM)
-            try {
-                const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
-
-                // 4. Encode to WAV
-                const wavBlob = bufferToWave(audioBuffer, audioBuffer.length);
-
-                statusText.innerText = "Sending data...";
-                const faceBlob = await captureFaceFrame();
-                sendAudioToBackend(wavBlob, faceBlob);
-
-            } catch (e) {
-                console.error("Error decoding audio", e);
-                statusText.innerText = "Error converting audio.";
-                recordBtn.disabled = false;
-            }
+            statusText.innerText = "Sending data...";
+            const faceBlob = await captureFaceFrame();
+            sendAudioToBackend(wavBlob, faceBlob);
         };
 
-        // Start Recording
         recorder.start();
         isRecording = true;
 
-        // UI Updates
         statusText.innerText = "Listening... (Click to Stop)";
         recordBtn.innerText = "Stop Listening";
-        recordBtn.classList.add("recording-active");
 
-        // Safety Timeout (6 seconds max)
         setTimeout(() => {
-            if (isRecording) {
-                stopRecording();
-            }
+            if (isRecording) stopRecording();
         }, 6000);
 
     } catch (err) {
         console.error("Microphone Error:", err);
         statusText.innerText = "⚠️ Mic Access Denied";
-        alert("Please allow microphone access to use this feature.\nError: " + err.message);
         recordBtn.disabled = false;
         isRecording = false;
     }
 }
 
 function stopRecording() {
-    // Only stop if the recorder exists and is active
-    if (recorder && recorder.state !== "inactive") {
-        recorder.stop();
-        console.log("Recorder stopped");
-    }
-
-    // IMPORTANT: Stop all tracks in the stream to turn off the mic light
+    if (recorder && recorder.state !== "inactive") recorder.stop();
     if (stream) {
         stream.getTracks().forEach(track => track.stop());
-        stream = null; // Clear the stream
-        console.log("Stream tracks stopped");
+        stream = null;
     }
 }
 
+// ---------------- SEND TO BACKEND ----------------
 function sendAudioToBackend(audioBlob, faceBlob) {
     const formData = new FormData();
-    formData.append("audio_data", audioBlob, "response.wav"); // Explicit filename
+    formData.append("audio_data", audioBlob, "response.wav");
 
-    // Add typed text if available
     const typedText = document.getElementById("userText").value;
     formData.append("typed_text", typedText);
 
-    if (faceBlob) {
-        formData.append("face_data", faceBlob);
-    }
+    if (faceBlob) formData.append("face_data", faceBlob);
 
     fetch("/process_voice_answer", {
         method: "POST",
@@ -230,8 +157,14 @@ function sendAudioToBackend(audioBlob, faceBlob) {
     })
         .then(res => res.json())
         .then(data => {
-            statusText.innerHTML = `${data.bot_reply}<br><b>Final Mood:</b> ${data.new_mood}<br><small>${data.reasoning}</small>`;
+            statusText.innerHTML =
+                `${data.bot_reply}<br><b>Final Mood:</b> ${data.new_mood}<br><small>${data.reasoning}</small>`;
+
             faceEmotionDisplay.innerText = data.new_mood;
+
+            // 🎵 PLAY MUSIC BASED ON FINAL EMOTION
+            playEmotionMusic(data.new_mood);
+
             recordBtn.disabled = false;
         })
         .catch(err => {
@@ -239,4 +172,49 @@ function sendAudioToBackend(audioBlob, faceBlob) {
             statusText.innerText = "Error processing response.";
             recordBtn.disabled = false;
         });
+}
+
+// ---------------- WAV CONVERTER ----------------
+function bufferToWave(abuffer, len) {
+    let numOfChan = abuffer.numberOfChannels,
+        length = len * numOfChan * 2 + 44,
+        buffer = new ArrayBuffer(length),
+        view = new DataView(buffer),
+        channels = [],
+        offset = 0,
+        pos = 0;
+
+    function setUint16(data) { view.setUint16(pos, data, true); pos += 2; }
+    function setUint32(data) { view.setUint32(pos, data, true); pos += 4; }
+
+    setUint32(0x46464952);
+    setUint32(length - 8);
+    setUint32(0x45564157);
+
+    setUint32(0x20746d66);
+    setUint32(16);
+    setUint16(1);
+    setUint16(numOfChan);
+    setUint32(abuffer.sampleRate);
+    setUint32(abuffer.sampleRate * 2 * numOfChan);
+    setUint16(numOfChan * 2);
+    setUint16(16);
+
+    setUint32(0x61746164);
+    setUint32(length - pos - 4);
+
+    for (let i = 0; i < abuffer.numberOfChannels; i++)
+        channels.push(abuffer.getChannelData(i));
+
+    while (pos < length) {
+        for (let i = 0; i < numOfChan; i++) {
+            let sample = Math.max(-1, Math.min(1, channels[i][offset]));
+            sample = sample < 0 ? sample * 32768 : sample * 32767;
+            view.setInt16(pos, sample, true);
+            pos += 2;
+        }
+        offset++;
+    }
+
+    return new Blob([buffer], { type: "audio/wav" });
 }
