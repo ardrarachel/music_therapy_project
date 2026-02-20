@@ -59,6 +59,14 @@ video {
 
 .controls {
     margin-bottom: 2rem;
+    position: relative;
+    z-index: 10;
+}
+
+#userText {
+    position: relative;
+    z-index: 20;
+    pointer-events: auto;
 }
 
 button {

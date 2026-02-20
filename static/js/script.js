@@ -14,11 +14,12 @@ navigator.mediaDevices.getUserMedia({ video: true })
 
 const recordBtn = document.getElementById("recordBtn");
 const statusText = document.getElementById("status");
-
+// --- GLOBAL AUDIO VARIABLES ---
 let recorder;
 let audioChunks = [];
+let audioStream = null; // Renamed to avoid confusion with video stream
+let isRecording = false;
 let audioContext = new (window.AudioContext || window.webkitAudioContext)();
-let stream = null;
 
 // 🎵 SPOTIFY PLAYLISTS FOR EACH EMOTION
 const emotionPlaylists = {
@@ -74,14 +75,80 @@ function sendFaceToBackend(faceBlob) {
         .then(data => {
             if (data.emotion) {
                 faceEmotionDisplay.innerText = data.emotion;
+
+                // Render Metrics if available
+                if (data.metrics) {
+                    const m = data.metrics;
+                    const html = `
+                        <div><b>Happy (Smile):</b> ${m.smile} <span style="color:${m.smile > 0.015 ? 'green' : 'gray'}">(>0.015)</span></div>
+                        <div><b>Sad (Frown):</b> ${m.smile} <span style="color:${m.smile < -0.002 ? 'green' : 'gray'}">(<-0.002)</span></div>
+                        <div><b>Sad (EyeOpen):</b> ${m.eye_open} <span style="color:${m.eye_open < 0.03 ? 'green' : 'gray'}">(<0.03)</span></div>
+                        <div><b>Surprise (Mouth):</b> ${m.mar} <span style="color:${m.mar > 0.20 ? 'green' : 'gray'}">(>0.20)</span></div>
+                        <div><b>Angry (BrowDist):</b> ${m.glabella} <span style="color:${m.glabella < 0.285 ? 'green' : 'gray'}">(<0.285)</span></div>
+                    `;
+                    document.getElementById("face-metrics").innerHTML = html;
+                }
             }
         })
         .catch(err => console.error("Face detection error:", err));
 }
 
-// ---------------- RECORDING ----------------
-let isRecording = false;
+// --- WAV ENCODING HELPERS ---
+function bufferToWave(abuffer, len) {
+    let numOfChan = abuffer.numberOfChannels,
+        length = len * numOfChan * 2 + 44,
+        buffer = new ArrayBuffer(length),
+        view = new DataView(buffer),
+        channels = [], i, sample,
+        offset = 0,
+        pos = 0;
 
+    // write WAVE header
+    setUint32(0x46464952);                         // "RIFF"
+    setUint32(length - 8);                         // file length - 8
+    setUint32(0x45564157);                         // "WAVE"
+
+    setUint32(0x20746d66);                         // "fmt " chunk
+    setUint32(16);                                 // length = 16
+    setUint16(1);                                  // PCM (uncompressed)
+    setUint16(numOfChan);
+    setUint32(abuffer.sampleRate);
+    setUint32(abuffer.sampleRate * 2 * numOfChan); // avg. bytes/sec
+    setUint16(numOfChan * 2);                      // block-align
+    setUint16(16);                                 // 16-bit (hardcoded in this example)
+
+    setUint32(0x61746164);                         // "data" - chunk
+    setUint32(length - pos - 4);                   // chunk length
+
+    // write interleaved data
+    for (i = 0; i < abuffer.numberOfChannels; i++)
+        channels.push(abuffer.getChannelData(i));
+
+    while (pos < len) {
+        for (i = 0; i < numOfChan; i++) {             // interleave channels
+            sample = Math.max(-1, Math.min(1, channels[i][offset])); // clamp
+            sample = (0.5 + sample < 0 ? sample * 32768 : sample * 32767) | 0; // scale to 16-bit signed int
+            view.setInt16(pos, sample, true);          // write 16-bit sample
+            pos += 2;
+        }
+        offset++;                                     // next source sample
+    }
+
+    // create Blob
+    return new Blob([buffer], { type: "audio/wav" });
+
+    function setUint16(data) {
+        view.setUint16(pos, data, true);
+        pos += 2;
+    }
+
+    function setUint32(data) {
+        view.setUint32(pos, data, true);
+        pos += 4;
+    }
+}
+
+// Toggle Button Logic
 recordBtn.onclick = () => {
     if (isRecording) stopRecording();
     else startRecording();
@@ -93,9 +160,12 @@ async function startRecording() {
             await audioContext.resume();
         }
 
-        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        recorder = new MediaRecorder(stream);
-        audioChunks = [];
+        // 1. Request Microphone Access
+        // IMPORTANT: Assign to GLOBAL audioStream, do not use 'const'
+        audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+        recorder = new MediaRecorder(audioStream);
+        audioChunks = []; // Reset chunks
 
         recorder.ondataavailable = e => audioChunks.push(e.data);
 
@@ -134,10 +204,16 @@ async function startRecording() {
 }
 
 function stopRecording() {
-    if (recorder && recorder.state !== "inactive") recorder.stop();
-    if (stream) {
-        stream.getTracks().forEach(track => track.stop());
-        stream = null;
+    // Only stop if the recorder exists and is active
+    if (recorder && recorder.state !== "inactive") {
+        recorder.stop();
+
+        // IMPORTANT: Stop all tracks in the stream to turn off the mic light
+        if (audioStream) {
+            audioStream.getTracks().forEach(track => track.stop());
+        }
+
+        console.log("Recording stopped.");
     }
 }
 

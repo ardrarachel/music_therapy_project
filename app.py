@@ -1,7 +1,7 @@
 from flask import Flask, render_template, request, jsonify
 import os
 
-from audio_logic import start_music_therapy
+from audio_logic import start_music_therapy, analyze_voice_input
 import fusion_engine   # teammate's module
 
 app = Flask(__name__)
@@ -26,6 +26,30 @@ def index():
 
 
 # ---------------- FACE EMOTION (Teammate 1) ----------------
+# Restoring the MISSING /detect_face route
+@app.route('/detect_face', methods=['POST'])
+def detect_face():
+    import real_emotion # Local import to avoid circular dependency issues if any
+    
+    if 'face_image' not in request.files:
+        return jsonify({"error": "No face image"}), 400
+    
+    file = request.files['face_image']
+    filepath = os.path.join(UPLOAD_FOLDER, "face_capture.jpg")
+    file.save(filepath)
+
+    # Analyze face
+    emotion, metrics = real_emotion.analyze_face(filepath)
+    
+    # Update Global State
+    current_state['face_emotion'] = emotion
+
+    return jsonify({
+        "status": "success", 
+        "emotion": emotion,
+        "metrics": metrics
+    })
+
 @app.route('/update_face', methods=['POST'])
 def update_face():
     data = request.json
@@ -53,13 +77,7 @@ def process_voice_answer():
     face_val = current_state['face_emotion']
     voice_val = simulated_voice_emotion
 
-    #fusion_result = fusion_engine.fuse_emotions(face_val, voice_val)
-    fusion_result = fusion_engine.fuse_multimodal_sensors(
-    {"emotion": face_val, "confidence": 0.6},
-    {"emotion": voice_val, "energy_score": 0.5, "pitch_score": 0.5},
-    current_state.get("last_spoken_text", "")
-)
-
+    fusion_result = fusion_engine.fuse_emotions(face_val, voice_val)
     current_state['final_mood'] = fusion_result['final_mood']
 
     print(f"\n🎭 Face: {face_val} | 🎤 Voice: {voice_val} | 🧠 Final Mood: {current_state['final_mood']}")
