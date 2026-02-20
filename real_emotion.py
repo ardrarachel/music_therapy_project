@@ -4,13 +4,12 @@ import mediapipe as mp
 
 # Direct access to the internal modules to bypass the "solutions" error
 try:
-    from mediapipe.python.solutions import face_mesh as mp_face_mesh
-    from mediapipe.python.solutions import drawing_utils as mp_drawing
+    import mediapipe as mp
+    mp_face_mesh = mp.solutions.face_mesh
 except ImportError:
     # Fallback for newer MediaPipe structures
-    import mediapipe.solutions.face_mesh as mp_face_mesh
-    import mediapipe.solutions.drawing_utils as mp_drawing
-
+    import mediapipe as mp
+    mp_face_mesh = mp.solutions.face_mesh
 # Initialize using the direct reference
 face_mesh_module = mp_face_mesh.FaceMesh(
     static_image_mode=False,

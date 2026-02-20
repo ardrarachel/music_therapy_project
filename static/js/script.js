@@ -237,9 +237,13 @@ function sendAudioToBackend(audioBlob, faceBlob) {
                 `${data.bot_reply}<br><b>Final Mood:</b> ${data.new_mood}<br><small>${data.reasoning}</small>`;
 
             faceEmotionDisplay.innerText = data.new_mood;
-
+            window.postMessage({
+            type: "FINAL_MOOD",
+            mood: data.new_mood
+            });
             // 🎵 PLAY MUSIC BASED ON FINAL EMOTION
             playEmotionMusic(data.new_mood);
+            
 
             recordBtn.disabled = false;
         })

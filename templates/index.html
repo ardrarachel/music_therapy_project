@@ -39,10 +39,21 @@
             <p id="status">Waiting for your response...</p>
         </div>
 
-        <audio id="musicPlayer" controls></audio>
-    </div>
+    <div id="musicSection" style="margin-top:20px;">
+    <h3>🎵 Therapy Playlist</h3>
+
+    <iframe
+        id="spotifyPlayer"
+        style="border-radius:12px"
+        width="100%"
+        height="352"
+        frameborder="0"
+        allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture">
+    </iframe>
+</div>
 
     <script src="{{ url_for('static', filename='js/script.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/music_player.js') }}"></script>
 </body>
 
 </html>
