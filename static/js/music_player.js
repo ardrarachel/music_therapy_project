@@ -1,31 +1,50 @@
-// 🎵 ISO Principle Therapy Player
-// Works with your existing index.html
-// Only needs <span id="emotion">Mood</span>
+// 🎵 Multimodal Music Therapy Player (ISO Principle Version)
+// Works independently of backend audio files
+// Detects emotion text and switches Spotify playlists automatically
 
-const isoTherapyFlow = {
-    "Angry": ["Angry", "Calm", "Happy"],
-    "Sad": ["Sad", "Calm", "Happy"],
-    "Fear": ["Fear", "Calm", "Happy"],
-    "Neutral": ["Neutral", "Calm", "Happy"],
-    "Calm": ["Calm", "Happy"],
-    "Happy": ["Happy"]
+// -------- 🎧 MALAYALAM + GLOBAL ISO PLAYLIST FLOW --------
+// Mood → Transition → Final Calm/Happy
+
+const isoPlaylists = {
+    "Angry": [
+        "37i9dQZF1DWZUAeYvs88zc", // intense
+        "37i9dQZF1DX7qK8ma5wgG1", // emotional release
+        "37i9dQZF1DX3rxVfibe1L0"  // calm
+    ],
+
+    "Sad": [
+        "37i9dQZF1DX7qK8ma5wgG1", // sad validation
+        "37i9dQZF1DX4WYpdgoIcn6", // neutral
+        "37i9dQZF1DX3rxVfibe1L0"  // calm
+    ],
+
+    "Fear": [
+        "37i9dQZF1DWX83CujKHHOn", // soothing
+        "37i9dQZF1DX4WYpdgoIcn6",
+        "37i9dQZF1DX3rxVfibe1L0"
+    ],
+
+    "Neutral": [
+        "37i9dQZF1DX4WYpdgoIcn6",
+        "37i9dQZF1DX3rxVfibe1L0"
+    ],
+
+    "Happy": [
+        "37i9dQZF1DXdPec7aLTmlC"
+    ],
+
+    "Calm": [
+        "37i9dQZF1DX3rxVfibe1L0"
+    ]
 };
 
-// 🌍 Multi-language playlists (you can replace IDs later)
-const moodPlaylists = {
-    "Happy": "37i9dQZF1DX2apWzyECwyZ",     // Malayalam Feel Good
-    "Sad": "37i9dQZF1DXdFesNN9TzXT",       // Malayalam Melody Therapy
-    "Angry": "37i9dQZF1DX3Rj7nU9YQkT",     // Malayalam Energy / Motivation
-    "Fear": "37i9dQZF1DWV7EzJMK2FUI",      // Soft Indian Instrumental Calm
-    "Neutral": "37i9dQZF1DX6VDO8a6cQME",   // Peaceful Piano / Therapy base
-    "Calm": "37i9dQZF1DWYcDQ1hSjOpY"       // Deep Relaxation Instrumental
-};
 
-let currentFlow = [];
-let currentStep = 0;
-let lastMood = "";
+// -------- 🎵 MALAYALAM OPTIONAL BOOST --------
+// You can replace playlist IDs later with Malayalam ones
+const malayalamBoost = "37i9dQZF1DWYxwmBaMqxsl"; // Malayalam songs
 
-// Create UI automatically
+
+// -------- CREATE PLAYER UI AUTOMATICALLY --------
 function createMusicUI() {
     if (document.getElementById("spotifyPlayer")) return;
 
@@ -35,7 +54,7 @@ function createMusicUI() {
     section.style.marginTop = "20px";
 
     const title = document.createElement("h3");
-    title.innerText = "🎵 Therapy Playlist (Click once to start)";
+    title.innerText = "🎵 Therapy Playlist";
 
     const iframe = document.createElement("iframe");
     iframe.id = "spotifyPlayer";
@@ -43,63 +62,74 @@ function createMusicUI() {
     iframe.width = "100%";
     iframe.height = "352";
     iframe.frameBorder = "0";
-    iframe.allow =
-        "autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture";
+    iframe.allow = "autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture";
 
     section.appendChild(title);
     section.appendChild(iframe);
     container.appendChild(section);
 }
 
-// Load playlist
-function loadPlaylist(mood) {
-    const playlistId = moodPlaylists[mood] || moodPlaylists["Neutral"];
-    const iframe = document.getElementById("spotifyPlayer");
 
+// -------- PLAY PLAYLIST --------
+function playPlaylist(playlistId) {
+    const iframe = document.getElementById("spotifyPlayer");
     if (!iframe) return;
 
     iframe.src =
         "https://open.spotify.com/embed/playlist/" +
         playlistId +
-        "?utm_source=generator";
+        "?utm_source=generator&autoplay=1";
 }
 
-// Start ISO therapy flow
-function startTherapy(mood) {
-    currentFlow = isoTherapyFlow[mood] || ["Neutral", "Calm", "Happy"];
-    currentStep = 0;
-    playNextStep();
+
+// -------- ISO SEQUENCE PLAYER --------
+let isoTimer = null;
+
+function playIsoSequence(mood) {
+    const sequence = isoPlaylists[mood] || isoPlaylists["Neutral"];
+
+    let index = 0;
+
+    clearInterval(isoTimer);
+
+    playPlaylist(sequence[index]);
+
+    isoTimer = setInterval(() => {
+        index++;
+
+        if (index >= sequence.length) {
+            clearInterval(isoTimer);
+            return;
+        }
+
+        playPlaylist(sequence[index]);
+
+    }, 30000); // change playlist every 30 seconds
 }
 
-// Move through therapy stages automatically
-function playNextStep() {
-    if (currentStep >= currentFlow.length) return;
 
-    const mood = currentFlow[currentStep];
-    loadPlaylist(mood);
-
-    currentStep++;
-
-    // Change mood stage every 60 seconds
-    setTimeout(playNextStep, 60000);
-}
-
-// Watch emotion from backend
+// -------- WATCH EMOTION TEXT --------
 function watchEmotion() {
     const emotionElement = document.getElementById("emotion");
     if (!emotionElement) return;
 
+    let lastMood = "";
+
     setInterval(() => {
         const mood = emotionElement.innerText.trim();
 
-        if (mood !== lastMood) {
-            lastMood = mood;
-            startTherapy(mood);
-        }
-    }, 1000);
+        if (!mood || mood === lastMood) return;
+
+        lastMood = mood;
+        console.log("🎭 Mood detected:", mood);
+
+        playIsoSequence(mood);
+
+    }, 1500);
 }
 
-// Initialize
+
+// -------- INIT --------
 window.addEventListener("DOMContentLoaded", () => {
     createMusicUI();
     watchEmotion();
