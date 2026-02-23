@@ -16,3 +16,24 @@ env/
 temp_audio/
 *.wav
 *.jpg
+# Python junk
+__pycache__/
+*.pyc
+
+# Virtual Environment (Don't upload this!)
+venv/
+.venv/
+env/
+venv310/
+
+# VS Code settings
+.vscode/
+
+# Mac specific
+.DS_Store
+
+# Temporary audio/images
+temp_audio/
+*.wav
+*.jpg
+*.mp3
