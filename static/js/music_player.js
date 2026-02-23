@@ -52,56 +52,30 @@ let isoTimer = null;
 
 function playIsoSequence(mood) {
     const sequence = isoPlaylists[mood] || isoPlaylists["Neutral"];
+
     let index = 0;
 
     clearInterval(isoTimer);
 
-    function playNext() {
-        if (index >= sequence.length) return;
-
-        playPlaylist(sequence[index]);
-        console.log("🎵 Playing playlist:", sequence[index]);
-
-        const iframe = document.getElementById("spotifyPlayer");
-
-        // Wait for the song to finish before moving to next
-        // Spotify embed autoplay doesn't give exact duration,
-        // so we assume ~3:30 per playlist (210000ms)
-        let waitTime = 210000;
-
-        // For the first playlist, ensure full song
-        if (index === 0) {
-            waitTime = 210000; // adjust to actual first song duration in ms if needed
-        }
-
-        isoTimer = setTimeout(() => {
-            index++;
-            playNext();
-        }, waitTime);
-    }
-
-    playNext();
-}
-
-// -------- WATCH EMOTION TEXT --------
-function watchEmotion() {
-    const emotionElement = document.getElementById("emotion");
-    if (!emotionElement) return;
-
-    let lastMood = "";
-
-    isoTimer = setInterval(() => {
-    index++;
-
-    if (index >= sequence.length) {
-        clearInterval(isoTimer);
-        return;
-    }
-
     playPlaylist(sequence[index]);
 
-           }, 60000); // change playlist every 60 seconds
+    isoTimer = setInterval(() => {
+        index++;
+
+        if (index >= sequence.length) {
+            clearInterval(isoTimer);
+            return;
         }
+
+        playPlaylist(sequence[index]);
+
+    }, 30000); // change playlist every 30 seconds
+}
+
+
+// -------- (REMOVED: watchEmotion polling. Handled strictly by script.js explicit triggers now) --------
+
+
 // -------- INIT --------
 window.addEventListener("DOMContentLoaded", () => {
     createMusicUI();
