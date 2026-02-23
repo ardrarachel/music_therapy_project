@@ -5,8 +5,15 @@ import cv2
 import math
 import mediapipe as mp
 
-# Standard, clean initialization
-mp_face_mesh = mp.solutions.face_mesh
+# Direct access to the internal modules to bypass the "solutions" error
+try:
+    import mediapipe as mp
+    mp_face_mesh = mp.solutions.face_mesh
+except ImportError:
+    # Fallback for newer MediaPipe structures
+    import mediapipe as mp
+    mp_face_mesh = mp.solutions.face_mesh
+# Initialize using the direct reference
 face_mesh_module = mp_face_mesh.FaceMesh(
     static_image_mode=False,
     max_num_faces=1,

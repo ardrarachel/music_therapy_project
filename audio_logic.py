@@ -36,6 +36,7 @@ def init_player():
 
 def load_songs(folder):
     print(f"🔍 Loading songs from folder: {folder}")
+
     if not os.path.exists(folder):
         print(f"⚠ Folder missing: {folder}")
         return []
@@ -48,7 +49,8 @@ def build_iso_playlist(start_emotion):
     playlist = []
 
     for emotion in flow:
-        songs = load_songs(EMOTION_PATHS.get(emotion, ""))
+        folder = EMOTION_PATHS.get(emotion)
+        songs = load_songs(folder)
         if songs:
             playlist.append(random.choice(songs))
             
@@ -69,7 +71,7 @@ def start_music_therapy(emotion):
     playlist = build_iso_playlist(emotion)
 
     if not playlist:
-        print("❌ No songs found")
+        print("❌ No songs found for therapy")
         return
 
     threading.Thread(target=play_playlist_thread, args=(playlist,), daemon=True).start()

@@ -81,63 +81,26 @@ def process_voice_answer():
     filepath = os.path.join(UPLOAD_FOLDER, "response.wav")
     file.save(filepath)
 
-    # 1. Analyze the Voice
-    analysis = analyze_voice_input(filepath)
-    
-    # 2. Analyze the Face (from mid-recording capture)
-    if 'face_data' in request.files:
-        import real_emotion # Local import
-        face_file = request.files['face_data']
-        face_path = os.path.join(UPLOAD_FOLDER, "face_response.jpg")
-        face_file.save(face_path)
-        
-        # Analyze this specific frame
-        face_emo, _ = real_emotion.analyze_face(face_path)
-        print(f"📸 Mid-Recording Face Analysis: {face_emo}")
-        
-        # Update state so Fusion Engine uses THIS emotion
-        current_state['face_emotion'] = face_emo
-    
-    # 2. Update Voice State
-    current_state['voice_emotion'] = analysis['emotion']
-    
-    # Combined Text Logic
-    typed_text = request.form.get('typed_text', '')
-    voice_text = analysis['text']
-    
-    # Normalize: If voice failed, don't include "(Voice Only)" in the fusion text
-    if "Voice Only" in voice_text:
-        combined_text = typed_text
-    else:
-        combined_text = f"{typed_text} {voice_text}".strip()
-        
-    current_state['last_spoken_text'] = combined_text
-    
-    # 3. FUSION LOGIC (New Tri-Modal System)
-    # Get the latest face emotion from the global state (which we just updated)
-    
-    # Construct Face Sensor Data
-    face_data = {
-        "emotion": current_state['face_emotion'],
-        "confidence": 0.65  # Hardcoded heuristic baseline for now
-    }
-    
-    # Construct Voice Sensor Data
-    voice_data = {
-        "emotion": analysis['emotion'],
-        "energy_score": analysis.get('energy_score', 0.0),
-        "pitch_score": analysis.get('pitch_score', 0.0)
-    }
-    
-    # Call the new Fusion Engine with COMBINED text
-    fusion_result = fusion_engine.fuse_multimodal_sensors(face_data, voice_data, combined_text)
-    
+    # Voice emotion teammate will build later
+    simulated_voice_emotion = "Neutral"
+
+    current_state['voice_emotion'] = simulated_voice_emotion
+    current_state['last_spoken_text'] = "Voice processed"
+
+    # --------- FUSION ENGINE DECIDES FINAL MOOD ----------
+    face_val = current_state['face_emotion']
+    voice_val = simulated_voice_emotion
+
+    fusion_result = fusion_engine.fuse_emotions(face_val, voice_val)
     current_state['final_mood'] = fusion_result['final_mood']
-    
-    print(f"🗣️ User Input: '{combined_text}' | Fused Mood: {current_state['final_mood']}")
+
+    print(f"\n🎭 Face: {face_val} | 🎤 Voice: {voice_val} | 🧠 Final Mood: {current_state['final_mood']}")
+
+    # --------- 🎵 YOUR MUSIC THERAPY MODULE RUNS ----------
+    start_music_therapy(current_state['final_mood'])
 
     return jsonify({
-        "bot_reply": f"I understood: '{combined_text}'.",
+        "bot_reply": "Music therapy started.",
         "new_mood": current_state['final_mood'],
         "confidence": fusion_result['confidence'],
         "reasoning": fusion_result['reasoning']
@@ -146,5 +109,4 @@ def process_voice_answer():
 
 # ---------------- RUN SERVER ----------------
 if __name__ == '__main__':
-    app.run(debug=True,port=5001)
-
+    app.run(debug=False)
