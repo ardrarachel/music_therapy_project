@@ -1,3 +1,6 @@
+import os
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+
 import cv2
 import math
 import mediapipe as mp
@@ -17,6 +20,8 @@ face_mesh_module = mp_face_mesh.FaceMesh(
     min_detection_confidence=0.5,
     min_tracking_confidence=0.5
 )
+
+
 
 
 def calculate_distance(point1, point2):
@@ -100,10 +105,8 @@ def get_emotion(landmarks):
     }
 
     # --- LOGIC TRESHOLDS ---
-    print(f"[FACE DEBUG] Smile: {smile_val}, Brow: {avg_brow_raise}, Glabella: {norm_glabella}")
-    
-    # 1. HAPPY (Smile > 0.005) - Lowered from 0.015
-    if smile_val > 0.005:
+    # 1. HAPPY (Smile > 0.015)
+    if smile_val > 0.015:
         return f"Happy: Corners lifted", metrics
 
     # 2. SURPRISE (MAR > 0.20, Brows > 0.04)
@@ -132,15 +135,16 @@ def analyze_face(image_path):
         if image is None:
             return "Neutral", {}
 
-        # Convert the BGR image to RGB before processing.
         results = face_mesh_module.process(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
 
         if not results.multi_face_landmarks:
-            return "No Face Detected", {}
+            return "Neutral", {} # Return Neutral if no face is found
 
+        # 1. Get the landmarks for the FIRST face detected
         landmarks = results.multi_face_landmarks[0].landmark
         
-        emotion_text, metrics = get_emotion(landmarks)
+        # 2. Pass THAT variable to your get_emotion function
+        emotion_text, metrics = get_emotion(landmarks) 
         
         return emotion_text, metrics
 

@@ -178,9 +178,9 @@ def analyze_voice_input(file_path):
              
         # Rule 2: ANGER (Specific Case: VERY LOUD + STEADY)
         # Raised threshold to 0.18 to prevent "loud talking" from triggering it.
-        # Added "Hum Check": If variance is < 0.0001, it's virtually flat (fan/noise).
+        # Added "Hum Check": If variance is < 0.002, it's likely a fan/noise, NOT anger.
         elif energy > 0.18: 
-            if pitch_score < 0.0001:
+            if pitch_score < 0.002:
                 emotion = "Neutral" # Likely Noise/Hum
                 print("   [LOGIC] Rule Match: High Energy + Flat Tone -> NOISE/NEUTRAL (Hum Filter)")
             elif pitch_score < 0.010: # Very Steady, but not flat

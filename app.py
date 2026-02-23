@@ -1,5 +1,13 @@
-from flask import Flask, render_template, request, jsonify
 import os
+# Suppress the massive MediaPipe/TensorFlow C++ logs
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' 
+os.environ['GLOG_minloglevel'] = '2'
+
+import cv2
+import mediapipe as mp
+
+from flask import Flask, render_template, request, jsonify
+
 
 from audio_logic import start_music_therapy, analyze_voice_input
 import fusion_engine   # teammate's module
@@ -27,34 +35,40 @@ def index():
 
 # ---------------- FACE EMOTION (Teammate 1) ----------------
 # Restoring the MISSING /detect_face route
+from real_emotion import analyze_face # Make sure this is at the top
+
+import traceback # Add this at the top of app.py
 @app.route('/detect_face', methods=['POST'])
 def detect_face():
-    import real_emotion # Local import to avoid circular dependency issues if any
-    
-    if 'face_image' not in request.files:
-        return jsonify({"error": "No face image"}), 400
-    
-    file = request.files['face_image']
-    filepath = os.path.join(UPLOAD_FOLDER, "face_capture.jpg")
-    file.save(filepath)
+    print("📸 FRONTEND SENT AN IMAGE! Processing...")
+    try:
+        # 1. Look for FILES, not JSON
+        if 'face_image' not in request.files:
+            return jsonify({'error': 'No image provided in form data'}), 400
+        
+        file = request.files['face_image']
+        
+        # 2. Save the blob as a temporary image file
+        image_path = "temp_face.jpg"
+        file.save(image_path)
 
-    # Analyze face
-    emotion, metrics = real_emotion.analyze_face(filepath)
-    
-    # Update Global State
-    current_state['face_emotion'] = emotion
+        # 3. Call your MediaPipe function
+        emotion_text, metrics = analyze_face(image_path)
+        
+        # 4. Extract just the main emotion word (e.g., "Happy" from "Happy: Corners lifted")
+        main_emotion = emotion_text.split(":")[0] 
+        
+        # 5. Send clean JSON back to JavaScript
+        return jsonify({
+            'emotion': main_emotion,
+            'details': emotion_text,
+            'metrics': metrics
+        })
 
-    return jsonify({
-        "status": "success", 
-        "emotion": emotion,
-        "metrics": metrics
-    })
-
-@app.route('/update_face', methods=['POST'])
-def update_face():
-    data = request.json
-    current_state['face_emotion'] = data.get('emotion', 'Neutral')
-    return jsonify({"status": "face emotion updated"})
+    except Exception as e:
+        print("--- CRASH IN /detect_face ---")
+        traceback.print_exc() 
+        return jsonify({'error': str(e)}), 500
 
 
 # ---------------- VOICE + MUSIC THERAPY (YOUR PART) ----------------
