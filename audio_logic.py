@@ -114,6 +114,9 @@ def analyze_voice_input(file_path):
     try:
         with sr.AudioFile(file_path) as source:
             print("   [SPEECH] Recording for transcription...")
+            # Adjust for ambient noise to help Google hear quiet voices better
+            recognizer.adjust_for_ambient_noise(source, duration=0.5)
+            # Add a slight amplification to the audio data for the API
             audio_data = recognizer.record(source)
             text = recognizer.recognize_google(audio_data, language='en-US')
             print(f"   [SPEECH] Recognized: \"{text}\"")
@@ -132,7 +135,8 @@ def analyze_voice_input(file_path):
         
         # --- A. NOISE GATE (Dynamic) ---
         peak_volume = np.max(np.abs(y))
-        noise_threshold = 0.25 * peak_volume
+        # Lowered noise threshold from 0.25 to 0.10 so it doesn't aggressively delete quiet speech
+        noise_threshold = 0.10 * peak_volume
         
         # Create a mask where signal > threshold (Keep only loud parts)
         # We process the 'clean' signal for physics extraction
