@@ -12,48 +12,60 @@
         <h1>Multimodal Music Therapy AI</h1>
         <h2 id="question">How are you feeling today?</h2>
 
-        <div class="media-container">
-            <!-- Camera -->
-            <video id="video" autoplay muted playsinline></video>
-        </div>
+        <div class="split-layout">
+            <!-- LEFT PANEL: Camera, Text, Controls, Status -->
+            <div class="left-panel">
+                <div class="media-container">
+                    <!-- Camera -->
+                    <video id="video" autoplay muted playsinline></video>
+                </div>
 
-        <div class="controls">
-            <!-- Manual Text Input -->
-            <textarea id="userText" placeholder="Or type how you feel here..." rows="2"
-                style="width: 100%; margin-bottom: 10px; padding: 10px; border-radius: 5px; border: 1px solid #ccc;"></textarea>
+                <div class="controls">
+                    <!-- Manual Text Input -->
+                    <textarea id="userText" placeholder="How are you feeling...?" rows="2"></textarea>
 
-            <!-- Voice -->
-            <button id="recordBtn">
-                <span>🎤</span> Start Speaking
-            </button>
-        </div>
+                    <button id="submitTextBtn">
+                        Enter / Save Text
+                    </button>
 
-        <div class="status-box">
-            <p><b>Detected Emotion:</b> <span id="emotion" style="font-size: 1.2em; color: #007bff;">Neutral</span></p>
+                    <!-- Voice -->
+                    <button id="recordBtn">
+                        🎙️ Start Speaking
+                    </button>
+                </div>
 
-            <div id="face-metrics"
-                style="background: #f0f0f0; padding: 10px; border-radius: 5px; font-family: monospace; font-size: 0.9em; margin-top: 5px;">
-                Waiting for face data...
-            </div>
+                <div class="status-box">
+                    <p style="margin:0 0 10px 0;"><b>Detected Emotion:</b> <span id="emotion">Neutral</span></p>
+                    <p style="margin: 0 0 5px 0;"><b>Score (Confidence):</b> <span id="scoreDisplay"
+                            style="color: #1DB954;">--</span></p>
+                    <p style="margin: 0 0 5px 0;"><b>You Said:</b> <span id="youSaidDisplay"
+                            style="font-style: italic; color: #b3b3b3;">--</span></p>
 
-            <p id="status">Waiting for your response...</p>
-        </div>
+                    <div id="face-metrics"
+                        style="background: #121212; padding: 10px; border-radius: 5px; font-family: monospace; font-size: 0.9em; margin-top: 10px;">
+                        Waiting for face data...
+                    </div>
 
-    <div id="musicSection" style="margin-top:20px;">
-    <h3>🎵 Therapy Playlist</h3>
+                    <p id="status">Waiting for your response...</p>
+                </div>
+            </div> <!-- End Left Panel -->
 
-    <iframe
-        id="spotifyPlayer"
-        style="border-radius:12px"
-        width="100%"
-        height="352"
-        frameborder="0"
-        allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture">
-    </iframe>
-</div>
+            <!-- RIGHT PANEL: Spotify Session -->
+            <div class="right-panel">
+                <div id="musicSection">
+                    <h3 style="color:white;">🎵 Therapy Session</h3>
+                    <!-- Initial Placeholder Playlist before they speak -->
+                    <iframe id="spotifyPlayer" style="border-radius:12px"
+                        src="https://open.spotify.com/embed/playlist/37i9dQZF1DX4WYpdgoIcn6?utm_source=generator"
+                        width="100%" height="352" frameborder="0"
+                        allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture">
+                    </iframe>
+                </div>
+            </div> <!-- End Right Panel -->
+        </div> <!-- End Split Layout -->
 
-    <script src="{{ url_for('static', filename='js/script.js') }}"></script>
-    <script src="{{ url_for('static', filename='js/music_player.js') }}"></script>
+        <script src="{{ url_for('static', filename='js/script.js') }}"></script>
+        <script src="{{ url_for('static', filename='js/music_player.js') }}"></script>
 </body>
 
 </html>

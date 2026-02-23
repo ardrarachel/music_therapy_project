@@ -32,20 +32,25 @@ const emotionPlaylists = {
 };
 
 function playEmotionMusic(emotion) {
-    const playlist = emotionPlaylists[emotion] || emotionPlaylists["Neutral"];
-    musicPlayer.outerHTML =
-        `<iframe id="musicPlayer" src="${playlist}" width="100%" height="120"
-        frameborder="0" allow="autoplay; clipboard-write; encrypted-media; fullscreen"></iframe>`;
+    console.log(`🎵 Triggering Spotify Update for Mood: ${emotion}`);
+
+    // Call the built-in Sequence Player from music_player.js directly
+    if (typeof playIsoSequence === "function") {
+        playIsoSequence(emotion);
+    } else {
+        console.warn("music_player.js is missing or not loaded!");
+    }
 }
 
-// ---------------- FACE DETECTION ----------------
+// ---------------- FACE DETECTION & VOICE TRIGGER ----------------
+let faceDetectionInterval = null; // We'll keep a reference to a poll loop for AudioContext
+let audioAnalyser = null;
+let audioDataArray = null;
+let lastFaceTriggerTime = 0;
+
 function startFaceDetection() {
-    setInterval(async () => {
-        const faceBlob = await captureFaceFrame();
-        if (faceBlob) {
-            sendFaceToBackend(faceBlob);
-        }
-    }, 500);
+    // We no longer trigger unconditionally. We wait for user to start recording
+    // and let the voice trigger capture it.
 }
 
 function captureFaceFrame() {
@@ -164,6 +169,46 @@ async function startRecording() {
         // IMPORTANT: Assign to GLOBAL audioStream, do not use 'const'
         audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
 
+        // --- VISUAL TRIGGER (AUDIO ANALYZER) SETUP ---
+        const source = audioContext.createMediaStreamSource(audioStream);
+        audioAnalyser = audioContext.createAnalyser();
+        audioAnalyser.fftSize = 256;
+        source.connect(audioAnalyser);
+
+        let bufferLength = audioAnalyser.frequencyBinCount;
+        audioDataArray = new Float32Array(bufferLength);
+
+        // Polling loop for acoustic threshold
+        faceDetectionInterval = setInterval(() => {
+            if (!isRecording) return;
+
+            audioAnalyser.getFloatTimeDomainData(audioDataArray);
+
+            // Calculate RMS (Root Mean Square) Energy
+            let sumSquares = 0.0;
+            for (let i = 0; i < audioDataArray.length; i++) {
+                sumSquares += audioDataArray[i] * audioDataArray[i];
+            }
+            let rms = Math.sqrt(sumSquares / audioDataArray.length);
+
+            // Trigger Threshold = 0.02, Throttled to 1 face cap per 500ms
+            if (rms > 0.02) {
+                let now = Date.now();
+                if (now - lastFaceTriggerTime > 500) {
+                    lastFaceTriggerTime = now;
+                    triggerVoiceSynchronizedFaceCapture();
+                }
+            }
+        }, 100);
+        // ---------------------------------------------
+
+        activeFaceBlob = null; // Clear previous active speaking face
+
+        // --- UI RESET FOR FACE MEMORY ---
+        if (faceEmotionDisplay) faceEmotionDisplay.innerText = "Tracking...";
+        const metricsDisplay = document.getElementById("face-metrics");
+        if (metricsDisplay) metricsDisplay.innerHTML = "Waiting for face data...";
+
         recorder = new MediaRecorder(audioStream);
         audioChunks = []; // Reset chunks
 
@@ -181,8 +226,10 @@ async function startRecording() {
             const wavBlob = bufferToWave(audioBuffer, audioBuffer.length);
 
             statusText.innerText = "Sending data...";
-            const faceBlob = await captureFaceFrame();
-            sendAudioToBackend(wavBlob, faceBlob);
+
+            // We no longer capture an empty/resting face frame here at the end.
+            // We rely on the acoustic trigger that fired WHILE the user was speaking.
+            sendAudioToBackend(wavBlob, activeFaceBlob);
         };
 
         recorder.start();
@@ -208,12 +255,27 @@ function stopRecording() {
     if (recorder && recorder.state !== "inactive") {
         recorder.stop();
 
+        if (faceDetectionInterval) {
+            clearInterval(faceDetectionInterval);
+        }
+
         // IMPORTANT: Stop all tracks in the stream to turn off the mic light
         if (audioStream) {
             audioStream.getTracks().forEach(track => track.stop());
         }
 
         console.log("Recording stopped.");
+    }
+}
+
+let activeFaceBlob = null; // Store the face frame captured during active speaking
+
+async function triggerVoiceSynchronizedFaceCapture() {
+    console.log("🎤 Voice Threshold Triggered -> 📸 Capturing Face");
+    const faceBlob = await captureFaceFrame();
+    if (faceBlob) {
+        activeFaceBlob = faceBlob; // Save it for the final compilation
+        sendFaceToBackend(faceBlob);
     }
 }
 
@@ -237,13 +299,21 @@ function sendAudioToBackend(audioBlob, faceBlob) {
                 `${data.bot_reply}<br><b>Final Mood:</b> ${data.new_mood}<br><small>${data.reasoning}</small>`;
 
             faceEmotionDisplay.innerText = data.new_mood;
+
+            if (data.user_said) {
+                document.getElementById("youSaidDisplay").innerText = `"${data.user_said}"`;
+            }
+            if (data.confidence !== undefined) {
+                document.getElementById("scoreDisplay").innerText = (data.confidence * 100).toFixed(0) + "%";
+            }
+
             window.postMessage({
-            type: "FINAL_MOOD",
-            mood: data.new_mood
+                type: "FINAL_MOOD",
+                mood: data.new_mood
             });
             // 🎵 PLAY MUSIC BASED ON FINAL EMOTION
             playEmotionMusic(data.new_mood);
-            
+
 
             recordBtn.disabled = false;
         })
@@ -252,6 +322,32 @@ function sendAudioToBackend(audioBlob, faceBlob) {
             statusText.innerText = "Error processing response.";
             recordBtn.disabled = false;
         });
+}
+
+// ---------------- TEXT SUBMISSION (WAIT FOR VOICE/FACE) ----------------
+const submitTextBtn = document.getElementById("submitTextBtn");
+const userTextInput = document.getElementById("userText");
+
+if (submitTextBtn) {
+    submitTextBtn.onclick = () => {
+        const textVal = userTextInput.value.trim();
+        if (textVal === "") return;
+
+        // Visual feedback to let user know text is locked in
+        statusText.innerHTML = `<b>Text saved:</b> "${textVal}"<br><i>Waiting for you to 🎤 Speak to complete analysis...</i>`;
+
+        // We do NOT send a separate /process_text POST.
+        // The text is grabbed down inside sendAudioToBackend().
+    };
+}
+
+if (userTextInput) {
+    userTextInput.addEventListener("keypress", function (event) {
+        if (event.key === "Enter" && !event.shiftKey) {
+            event.preventDefault(); // prevent new line
+            if (submitTextBtn) submitTextBtn.click();
+        }
+    });
 }
 
 // ---------------- WAV CONVERTER ----------------
