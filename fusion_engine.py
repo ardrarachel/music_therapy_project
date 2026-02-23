@@ -1,44 +1,34 @@
 import re
 
+from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
+
 def analyze_text_sentiment(user_text):
     """
-    Part 1: Text Sensor Logic (Bag-of-Words)
-    Determines emotion from text using keyword counting.
+    Part 1: Text Sensor Logic (VADER Lexicon-Based Sentiment Analysis)
+    Determines emotion from text using Valance Aware Dictionary and sEntiment Reasoner.
     """
-    text = user_text.lower()
-    words = re.findall(r'\b\w+\b', text)
-    total_words = len(words) if words else 1
+    if not user_text.strip():
+        return "Neutral", 0.0
 
-    # Emotion dictionary
-    keywords = {
-        "Happy": ["happy", "good", "great", "joy", "love", "excellent", "excited", "fun", "best", "smile"],
-        "Sadness": ["sad", "bad", "terrible", "cry", "lonely", "depressed", "hurt", "pain", "sorry", "miss"],
-        "Anger": ["angry", "mad", "hate", "furious", "annoyed", "stupid", "idiot", "rage", "shut"],
-        "Excited": ["wow", "amazing", "can't wait", "hurray", "yay", "boom", "party", "win"],
-        "Calm": ["calm", "chill", "relax", "peace", "okay", "fine", "sleep", "breathe", "neutral"]
-    }
-
-    scores = {emo: 0 for emo in keywords}
-
-    for word in words:
-        for emo, vocab in keywords.items():
-            if word in vocab:
-                scores[emo] += 1
-
-    # Find winner
-    best_emotion = max(scores, key=scores.get)
-    hits = scores[best_emotion]
-
-    # Heuristic Confidence: If hits > 0, confidence = hits / total_words (capped). 
-    # If 0 hits, default to Neutral.
-    if hits == 0:
-        return "Neutral", 0.50
+    analyzer = SentimentIntensityAnalyzer()
+    sentiment_dict = analyzer.polarity_scores(user_text)
     
-    # Simple semantic density score
-    confidence = min(0.99, 0.5 + (hits / total_words)) 
+    # Compound score ranges from -1 (most extreme negative) to +1 (most extreme positive)
+    s_text = sentiment_dict['compound']
+    
+    # Heuristic Thresholding: Map the Compound Score directly to the valence axis.
+    if s_text >= 0.05:
+        best_emotion = "Happy" # Positive valence
+    elif s_text <= -0.05:
+        best_emotion = "Sadness" # Negative valence
+    else:
+        best_emotion = "Neutral"
+
+    # For confidence, we use the absolute value of the compound score
+    # We ensure it has a minimum floor of 0.5 so it doesn't sink the fusion engine too hard if weak
+    confidence = max(0.5, abs(s_text))
     
     return best_emotion, round(confidence, 2)
-
 
 def fuse_multimodal_sensors(face_data, voice_data, user_text):
     """
@@ -64,6 +54,18 @@ def fuse_multimodal_sensors(face_data, voice_data, user_text):
     
     # 3. Text Input
     text_emo, text_conf = analyze_text_sentiment(user_text)
+
+    # --- CLOSED-LOOP CONFLICT RESOLUTION ---
+    # Since Face is now voice-triggered (only when RMS > 0.02), if the user says
+    # something Negative, but their Face is Happy + Voice variance is high (Excited/Happy),
+    # the acoustic & visual modality trumps the linguistic modality (e.g., sarcasm or irony).
+    
+    if text_emo == "Sadness" or text_emo == "Anger":
+        if face_emo == "Happy" and (voice_emo == "Happy" or voice_emo == "Excited"):
+            # Trust the acoustic/visual synchronization over the words
+            text_emo = "Happy" 
+            text_conf = 0.50 # Penalize text confidence for lying
+            print("   [OVERRIDE] Sarcasm Detected: Negative Text overridden by Active Happy Face + Voice Variance.")
 
 
     # --- STEP B: Squared Weighting Algorithm ---

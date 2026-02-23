@@ -31,27 +31,9 @@ const isoPlaylists = {
 
 // -------- CREATE PLAYER UI --------
 function createMusicUI() {
-    if (document.getElementById("spotifyPlayer")) return;
-
-    const container = document.querySelector(".container");
-
-    const section = document.createElement("div");
-    section.style.marginTop = "20px";
-
-    const title = document.createElement("h3");
-    title.innerText = "🎵 Therapy Playlist";
-
-    const iframe = document.createElement("iframe");
-    iframe.id = "spotifyPlayer";
-    iframe.style.borderRadius = "12px";
-    iframe.width = "100%";
-    iframe.height = "352";
-    iframe.frameBorder = "0";
-    iframe.allow = "autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture";
-
-    section.appendChild(title);
-    section.appendChild(iframe);
-    container.appendChild(section);
+    // The UI is now statically built into index.html's .right-panel split layout. 
+    // We no longer need to dynamically append it to the bottom of the container.
+    return;
 }
 
 // -------- PLAY SINGLE PLAYLIST --------
@@ -101,27 +83,13 @@ function playIsoSequence(mood) {
     playNext();
 }
 
-// -------- WATCH EMOTION TEXT --------
-function watchEmotion() {
-    const emotionElement = document.getElementById("emotion");
-    if (!emotionElement) return;
 
-    let lastMood = "";
-
-    isoTimer = setInterval(() => {
-    index++;
-
-    if (index >= sequence.length) {
-        clearInterval(isoTimer);
-        return;
-    }
-
-    playPlaylist(sequence[index]);
+// -------- (REMOVED: watchEmotion polling. Handled strictly by script.js explicit triggers now) --------
 
            }, 60000); // change playlist every 60 seconds
         }
 // -------- INIT --------
 window.addEventListener("DOMContentLoaded", () => {
     createMusicUI();
-    watchEmotion();
+    // watchEmotion() removed to enforce strict voice/text-triggered closed loop.
 });

@@ -59,10 +59,9 @@ def get_emotion(landmarks):
 
     # 1. HAPPY: Lip Corner Angle / Slope
     # Positive value means corners are ABOVE center (Happy) (Y is inverted in image coords usually 0 at top)
-    # MediaPipe Y: 0 at top, 1 at bottom. So Smaller Y = Higher up.
     # Center Y - Corner Y > 0 => Corner Y is smaller => Corner is Higher => Smile.
-    
-    center_y = (top_lip[1] + bottom_lip[1]) / 2
+    # FIX: Use ONLY the top lip anchor so talking (jaw dropping) doesn't bias it towards "Happy"
+    center_y = top_lip[1]
     corners_y = (left_corner[1] + right_corner[1]) / 2
     smile_val = center_y - corners_y 
 
@@ -105,21 +104,22 @@ def get_emotion(landmarks):
     }
 
     # --- LOGIC TRESHOLDS ---
-    # 1. HAPPY (Smile > 0.015)
-    if smile_val > 0.015:
+    # 1. ANGRY 
+    # Must NOT be smiling (smile_val < 0.0) so a big grin that pinches the face isn't flagged as Angry
+    if norm_glabella < 0.32 and smile_val < 0.0: 
+         if avg_brow_raise < 0.15:
+             return f"Angry: Brows squeezed", metrics
+
+    # 2. HAPPY (Smile > -0.015) - Relaxed negative threshold due to top_lip anchoring
+    if smile_val > -0.010:
         return f"Happy: Corners lifted", metrics
 
-    # 2. SURPRISE (MAR > 0.20, Brows > 0.04)
+    # 3. SURPRISE (MAR > 0.20, Brows > 0.04)
     if mar > 0.20 and avg_brow_raise > 0.04: 
         return f"Surprised: Mouth open", metrics
 
-    # 3. ANGRY (Glabella < 0.285, Brows < 0.1)
-    if norm_glabella < 0.285: 
-         if avg_brow_raise < 0.1:
-             return f"Angry: Brows squeezed", metrics
-
-    # 4. SAD (Smile < -0.002 or Eyes < 0.03)
-    if smile_val < -0.002 or norm_eye_open < 0.03:
+    # 4. SAD (Smile < -0.035 or Eyes < 0.03)
+    if smile_val < -0.035 or norm_eye_open < 0.03:
         return f"Sad: Corners down", metrics
 
     # 5. NEUTRAL

@@ -58,6 +58,10 @@ def detect_face():
         # 4. Extract just the main emotion word (e.g., "Happy" from "Happy: Corners lifted")
         main_emotion = emotion_text.split(":")[0] 
         
+        # --- NEW CODE: Update Global State so Fusion Engine sees it ---
+        current_state['face_emotion'] = main_emotion
+        print(f"   [FACE CAPTURE] State updated to: {main_emotion}")
+        
         # 5. Send clean JSON back to JavaScript
         return jsonify({
             'emotion': main_emotion,
@@ -81,17 +85,32 @@ def process_voice_answer():
     filepath = os.path.join(UPLOAD_FOLDER, "response.wav")
     file.save(filepath)
 
-    # Voice emotion teammate will build later
-    simulated_voice_emotion = "Neutral"
+    # 1. Voice Analysis (Using the physics logic)
+    voice_result = analyze_voice_input(filepath)
+    voice_val = voice_result['emotion']
+    
+    # Check if user typed anything manually in the UI
+    typed_text = request.form.get('typed_text', '').strip()
+    if typed_text:
+        user_text = typed_text
+        print(f"\n⌨️ [USER TYPED]: {user_text}")
+    else:
+        user_text = voice_result['text']
+        print(f"\n🗣️ [USER SAID]: {user_text}")
 
-    current_state['voice_emotion'] = simulated_voice_emotion
-    current_state['last_spoken_text'] = "Voice processed"
+    current_state['voice_emotion'] = voice_val
+    current_state['last_spoken_text'] = user_text
 
     # --------- FUSION ENGINE DECIDES FINAL MOOD ----------
+    # Grab the recently detected face. If they haven't sent a face recently, it holds the last one.
     face_val = current_state['face_emotion']
-    voice_val = simulated_voice_emotion
+    face_data = {'emotion': face_val, 'confidence': 0.8} # Mock confidence for face
+    
+    # Reset face emotion back to Neutral after consuming it, preventing permanent stuck states
+    current_state['face_emotion'] = "Neutral"
 
-    fusion_result = fusion_engine.fuse_emotions(face_val, voice_val)
+    # Use the multimodal fusion engine (It will recalculate VADER using user_text automatically)
+    fusion_result = fusion_engine.fuse_multimodal_sensors(face_data, voice_result, user_text)
     current_state['final_mood'] = fusion_result['final_mood']
 
     print(f"\n🎭 Face: {face_val} | 🎤 Voice: {voice_val} | 🧠 Final Mood: {current_state['final_mood']}")
@@ -103,9 +122,11 @@ def process_voice_answer():
         "bot_reply": "Music therapy started.",
         "new_mood": current_state['final_mood'],
         "confidence": fusion_result['confidence'],
-        "reasoning": fusion_result['reasoning']
+        "reasoning": fusion_result['reasoning'],
+        "user_said": user_text
     })
 
+# (Removed standalone /process_text endpoint per request, everything fuses via Voice trigger now)
 
 # ---------------- RUN SERVER ----------------
 if __name__ == '__main__':
