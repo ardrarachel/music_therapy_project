@@ -30,7 +30,7 @@ baseline_metrics = {
     "mar": 0.0,
     "glabella": 0.0,
     "eye_open": 0.0,
-    "frown_ratio": 0.0,
+    "lip_drop": 0.0,
     "mouth_width": 0.0
 }
 calibration_frames = []
@@ -56,7 +56,9 @@ def get_facial_metrics(landmarks):
     if lip_v_dist == 0: lip_v_dist = 0.001
     
     mouth_width = calc_dist(61, 291)
-    smile_ratio = mouth_width / lip_v_dist
+    # Using vertical lip distance as denominator is unstable during speech/frowns.
+    # We will normalize smile width by face width instead.
+    smile_ratio = mouth_width / face_width
     
     mar = lip_v_dist / mouth_width if mouth_width > 0 else 0
     
@@ -64,16 +66,28 @@ def get_facial_metrics(landmarks):
     
     avg_eye_open = ((calc_dist(159, 145) + calc_dist(386, 374)) / 2) / face_width
     
-    fh_chin_dist = calc_dist(10, 152)
-    corners_chin_dist = (calc_dist(61, 152) + calc_dist(291, 152)) / 2
-    frown_ratio = corners_chin_dist / fh_chin_dist if fh_chin_dist > 0 else 0
+    # Isolate true vertical movement of lip corners relative to the nose tip (4).
+    # Face axis from chin (152) to forehead (10)
+    axis_dx = landmarks[10].x - landmarks[152].x
+    axis_dy = landmarks[10].y - landmarks[152].y
+    axis_len = math.hypot(axis_dx, axis_dy) + 0.0001
+    v_x, v_y = axis_dx/axis_len, axis_dy/axis_len
+    
+    def get_vertical_dist(idx_bottom, idx_top):
+        dx = landmarks[idx_top].x - landmarks[idx_bottom].x
+        dy = landmarks[idx_top].y - landmarks[idx_bottom].y
+        return (dx * v_x + dy * v_y)
+        
+    lip_drop_left = get_vertical_dist(61, 4)
+    lip_drop_right = get_vertical_dist(291, 4)
+    lip_drop = (lip_drop_left + lip_drop_right) / (2 * face_width)
     
     return {
         "smile_ratio": smile_ratio,
         "mar": mar,
         "glabella": glabella,
         "eye_open": avg_eye_open,
-        "frown_ratio": frown_ratio,
+        "lip_drop": lip_drop,
         "mouth_width": mouth_width
     }
 
@@ -116,33 +130,104 @@ def get_emotion(landmarks):
         return visual_score, metrics, "Neutral", 0.5
     
     # Calculate deviations
-    dev_smile = metrics["mouth_width"] / (baseline_metrics.get("mouth_width", 1.0) if baseline_metrics.get("mouth_width", 0) > 0 else 1.0)
-    dev_frown = metrics["frown_ratio"] / (baseline_metrics["frown_ratio"] if baseline_metrics["frown_ratio"] > 0 else 1.0)
+    dev_smile_ratio = metrics["smile_ratio"] / (baseline_metrics.get("smile_ratio", 1.0) if baseline_metrics.get("smile_ratio", 0) > 0 else 1.0)
+    dev_lip_drop = metrics["lip_drop"] / (baseline_metrics["lip_drop"] if baseline_metrics["lip_drop"] > 0 else 1.0)
     dev_glabella = metrics["glabella"] / (baseline_metrics["glabella"] if baseline_metrics["glabella"] > 0 else 1.0)
     dev_mar = metrics["mar"] / (baseline_metrics["mar"] if baseline_metrics["mar"] > 0 else 1.0)
     dev_eye_open = metrics["eye_open"] / (baseline_metrics["eye_open"] if baseline_metrics["eye_open"] > 0 else 1.0)
     
+    print(f"[DEBUG DEV] smile:{dev_smile_ratio:.2f} | lip_drop:{dev_lip_drop:.2f} | glabella:{dev_glabella:.2f} | mar:{dev_mar:.2f} | eye:{dev_eye_open:.2f}")
+
     any_deviation = False
     
-    # Require a 5% increase in pure width to trigger "Happy" to prevent false positives from talking
-    if dev_smile > 1.05:
-        visual_score["happy"] = min(1.0, (dev_smile - 1.05) * 15)
+    # 1. HAPPY (Smile):
+    # A true smile pulls the lip corners UP towards the nose (lip_drop < 1.0).
+    # We trigger happy if the mouth widens AND the corners don't physically drop down like a frown.
+    if dev_smile_ratio > 1.05 and dev_lip_drop < 1.05:
+        visual_score["happy"] = min(1.0, (dev_smile_ratio - 1.05) * 12.0)
         any_deviation = True
         
-    if dev_frown < 0.97: # Slightly softer constraint for sadness
-        visual_score["sad"] = min(1.0, (0.97 - dev_frown) * 15)
+    # 2. SAD: Lip corners drop OR pout (mouth narrows) OR wry sadness (squint + slight smile).
+    # When sad, your lip corners either pull DOWN visibly (lip_drop >= 1.03) 
+    # OR you pout, causing the mouth to narrow (smile_ratio <= 0.98) and the lips to push down very slightly (lip_drop >= 1.00)
+    # OR you exhibit wry sadness (squinting hard with a relaxed/slightly widened mouth and relaxed glabella).
+    if (dev_lip_drop >= 1.03 and dev_glabella > 0.90) or \
+       (dev_smile_ratio <= 0.98 and dev_lip_drop >= 1.00) or \
+       (dev_eye_open <= 0.85 and dev_glabella >= 1.00 and 1.0 <= dev_smile_ratio <= 1.05 and dev_lip_drop <= 0.99): 
+        sad_score = 0.0
+        if dev_lip_drop >= 1.03:
+            sad_score = (dev_lip_drop - 1.03) * 15
+        elif dev_smile_ratio <= 0.98:
+            sad_score = (0.98 - dev_smile_ratio) * 15 + (dev_lip_drop - 0.99) * 10
+        elif dev_eye_open <= 0.85:
+            sad_score = (0.85 - dev_eye_open) * 15
+        visual_score["sad"] = min(1.0, sad_score)
         any_deviation = True
         
-    # Surprise must also involve widened eyes to prevent regular talking or sadness from triggering MAR
-    if dev_mar > 1.20 and dev_eye_open > 1.03:
-        visual_score["surprise"] = min(1.0, (dev_mar - 1.20) * 3)
+    # 3. SURPRISE: Real surprise demands an open mouth AND widened eyes
+    if dev_mar > 1.50 and dev_eye_open > 1.10:
+        visual_score["surprise"] = min(1.0, (dev_mar - 1.50) * 2)
         any_deviation = True
         
-    if dev_glabella < 0.98: # Glabella doesn't squeeze much, make constraint softer
-        visual_score["angry"] = min(1.0, (0.98 - dev_glabella) * 15)
+    # 4. ANGRY: Glabella shrink OR extreme lip drop + squint OR tight grimace.
+    is_angry = False
+    ang_score = 0.0
+    
+    # Squeezing glabella
+    if dev_glabella <= 0.96: 
+        is_angry = True
+        ang_score += (0.96 - dev_glabella) * 20
+        
+    # Massive frown combined with anger traits (squint or glabella squeeze)
+    if dev_lip_drop >= 1.05 and (dev_eye_open <= 0.88 or dev_glabella <= 0.96): 
+        is_angry = True
+        if dev_eye_open <= 0.88:
+            ang_score += (0.88 - dev_eye_open) * 15
+        if dev_glabella <= 0.96:
+            ang_score += (0.96 - dev_glabella) * 15
+        ang_score += (dev_lip_drop - 1.05) * 15 
+        
+    # Tight jaw/grimace (narrow mouth) + slight glabella squeeze or slight squint
+    if dev_smile_ratio <= 0.98 and (dev_glabella <= 0.99 or dev_eye_open <= 0.92):
+        is_angry = True
+        if dev_glabella <= 0.99:
+            ang_score += (0.99 - dev_glabella) * 15
+        if dev_eye_open <= 0.92:
+            ang_score += (0.92 - dev_eye_open) * 15
+        ang_score += (0.98 - dev_smile_ratio) * 10
+        
+    # Intense Stare (relaxed mouth, heavy squint, slight glabella squeeze)
+    # MUST ensure smile_ratio is not extremely high (preventing false angry when laughing out loud)
+    if dev_eye_open <= 0.88 and dev_glabella <= 0.99 and dev_smile_ratio >= 0.98 and dev_smile_ratio < 1.10 and dev_lip_drop <= 1.02:
+        is_angry = True
+        ang_score += (0.88 - dev_eye_open) * 20 + (0.99 - dev_glabella) * 10
+            
+    if is_angry:
+        visual_score["angry"] = min(1.0, ang_score)
         any_deviation = True
         
-    if not any_deviation or max(visual_score.values()) < 0.20:
+    # Conflict Resolution:
+    # If the system detects an intense stare or tight jaw (Angry traits), suppress Happy.
+    # However, if the smile ratio is HUGE (> 1.10), the squinting is just from laughing hard
+    if (dev_eye_open <= 0.85 or is_angry) and dev_smile_ratio < 1.10:
+        visual_score["happy"] = 0.0
+        
+    # If the system detects a genuine lip drop (frown) or narrowing pout, suppress Happy.
+    if dev_lip_drop >= 1.03 or dev_smile_ratio <= 0.98:
+        visual_score["happy"] = 0.0
+        
+    # If Angry traits strongly compete with Sad, let Angry dominate
+    if visual_score["angry"] >= 0.5 and visual_score["angry"] >= visual_score["sad"]:
+        visual_score["sad"] *= 0.5
+        
+    # Strong glabella squeeze is definitively angry/concentrating, not purely sad
+    if dev_glabella <= 0.96 and visual_score["angry"] > 0.5:
+        visual_score["sad"] *= 0.2
+        
+    if visual_score["sad"] > 0.1 or visual_score["angry"] > 0.1:
+        if visual_score["happy"] < 0.5: # Only kill surprise/happy if it's not a dominant smile
+            visual_score["surprise"] = 0.0
+    if not any_deviation:
         visual_score["neutral"] = 1.0
         
     best_emotion = max(visual_score, key=visual_score.get)
