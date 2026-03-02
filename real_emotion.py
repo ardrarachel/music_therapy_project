@@ -4,6 +4,7 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 import cv2
 import math
 import mediapipe as mp
+import datetime
 
 # Direct access to the internal modules to bypass the "solutions" error
 try:
@@ -15,7 +16,7 @@ except ImportError:
     mp_face_mesh = mp.solutions.face_mesh
 # Initialize using the direct reference
 face_mesh_module = mp_face_mesh.FaceMesh(
-    static_image_mode=False,
+    static_image_mode=True,
     max_num_faces=1,
     min_detection_confidence=0.5,
     min_tracking_confidence=0.5
@@ -24,133 +25,162 @@ face_mesh_module = mp_face_mesh.FaceMesh(
 
 
 
+baseline_metrics = {
+    "smile_ratio": 0.0,
+    "mar": 0.0,
+    "glabella": 0.0,
+    "eye_open": 0.0,
+    "frown_ratio": 0.0,
+    "mouth_width": 0.0
+}
+calibration_frames = []
+baseline_calibrated = False
+
 def calculate_distance(point1, point2):
     """
     Helper function to calculate Euclidean distance between two points (x, y).
     """
     return math.hypot(point2[0] - point1[0], point2[1] - point1[1])
 
-def get_emotion(landmarks):
-    """
-    The main logic function containing the if/else threshold math using Euclidean Geometry.
-    """
-
-    # Extract coordinates (using .x and .y directly from landmarks)
-    
-    # helper to get (x,y) from index
+def get_facial_metrics(landmarks):
     def get_pt(idx):
         return (landmarks[idx].x, landmarks[idx].y)
-    
-    # --- Points of Interest ---
-    
-    # Mouth
-    top_lip = get_pt(13)
-    bottom_lip = get_pt(14)
-    left_corner = get_pt(61)
-    right_corner = get_pt(291)
-    
-    # Eyebrows
-    l_brow_inner = get_pt(55)
-    r_brow_inner = get_pt(285)
-    l_brow_mid = get_pt(105)
-    r_brow_mid = get_pt(334)
-    
-    # --- Geometric Logic ---
+        
+    def calc_dist(idx1, idx2):
+        return calculate_distance(get_pt(idx1), get_pt(idx2))
 
-    # 1. HAPPY: Lip Corner Angle / Slope
-    # Positive value means corners are ABOVE center (Happy) (Y is inverted in image coords usually 0 at top)
-    # Center Y - Corner Y > 0 => Corner Y is smaller => Corner is Higher => Smile.
-    # FIX: Use ONLY the top lip anchor so talking (jaw dropping) doesn't bias it towards "Happy"
-    center_y = top_lip[1]
-    corners_y = (left_corner[1] + right_corner[1]) / 2
-    smile_val = center_y - corners_y 
-
-    # --- 2. SURPRISE (Mouth Aspect Ratio) ---
-    mouth_width = calculate_distance(left_corner, right_corner)
-    mouth_height = calculate_distance(top_lip, bottom_lip)
-    if mouth_width == 0: mouth_width = 0.001
-    mar = mouth_height / mouth_width
-
-    # --- Eyebrow Raise (Shared by Surprise & Angry) ---
-    l_eye_top = get_pt(159)
-    r_eye_top = get_pt(386)
-    l_brow_raise = calculate_distance(l_eye_top, l_brow_mid)
-    r_brow_raise = calculate_distance(r_eye_top, r_brow_mid)
-    avg_brow_raise = (l_brow_raise + r_brow_raise) / 2
-
-    # --- 3. ANGRY (Glabella) ---
-    glabella_dist = calculate_distance(l_brow_inner, r_brow_inner)
-    l_eye_outer = get_pt(33)
-    r_eye_outer = get_pt(263)
-    face_width = calculate_distance(l_eye_outer, r_eye_outer)
+    face_width = calc_dist(33, 263)
     if face_width == 0: face_width = 0.001
-    norm_glabella = glabella_dist / face_width
-
-    # --- 4. SAD (Eye Openness) ---
-    l_eye_bottom = get_pt(145)
-    r_eye_bottom = get_pt(374)
-    left_eye_open = calculate_distance(l_eye_top, l_eye_bottom)
-    right_eye_open = calculate_distance(r_eye_top, r_eye_bottom)
-    avg_eye_open = (left_eye_open + right_eye_open) / 2
-    norm_eye_open = avg_eye_open / face_width
-
-    # --- COLLECT METRICS ---
-    metrics = {
-        "smile": round(smile_val, 4),
-        "mar": round(mar, 3),
-        "brow_raise": round(avg_brow_raise, 3),
-        "glabella": round(norm_glabella, 3),
-        "eye_open": round(norm_eye_open, 3)
+    
+    lip_v_dist = calc_dist(13, 14)
+    if lip_v_dist == 0: lip_v_dist = 0.001
+    
+    mouth_width = calc_dist(61, 291)
+    smile_ratio = mouth_width / lip_v_dist
+    
+    mar = lip_v_dist / mouth_width if mouth_width > 0 else 0
+    
+    glabella = calc_dist(55, 285) / face_width
+    
+    avg_eye_open = ((calc_dist(159, 145) + calc_dist(386, 374)) / 2) / face_width
+    
+    fh_chin_dist = calc_dist(10, 152)
+    corners_chin_dist = (calc_dist(61, 152) + calc_dist(291, 152)) / 2
+    frown_ratio = corners_chin_dist / fh_chin_dist if fh_chin_dist > 0 else 0
+    
+    return {
+        "smile_ratio": smile_ratio,
+        "mar": mar,
+        "glabella": glabella,
+        "eye_open": avg_eye_open,
+        "frown_ratio": frown_ratio,
+        "mouth_width": mouth_width
     }
 
-    # --- LOGIC TRESHOLDS ---
-    # 1. ANGRY 
-    # Must NOT be smiling (smile_val < 0.0) so a big grin that pinches the face isn't flagged as Angry
-    if norm_glabella < 0.32 and smile_val < 0.0: 
-         if avg_brow_raise < 0.15:
-             return f"Angry: Brows squeezed", metrics
-
-    # 2. HAPPY (Smile > -0.015) - Relaxed negative threshold due to top_lip anchoring
-    if smile_val > -0.010:
-        return f"Happy: Corners lifted", metrics
-
-    # 3. SURPRISE (MAR > 0.20, Brows > 0.04)
-    if mar > 0.20 and avg_brow_raise > 0.04: 
-        return f"Surprised: Mouth open", metrics
-
-    # 4. SAD (Smile < -0.035 or Eyes < 0.03)
-    if smile_val < -0.035 or norm_eye_open < 0.03:
-        return f"Sad: Corners down", metrics
-
-    # 5. NEUTRAL
-    return f"Neutral", metrics
-
-def analyze_face(image_path):
-    """
-    Analyzes the face image at the given path and returns an estimated emotion AND metrics.
-    Used by app.py.
-    """
+def calibrate_baseline(image_path):
+    global baseline_calibrated, baseline_metrics, calibration_frames
+    
     try:
         image = cv2.imread(image_path)
-        if image is None:
-            return "Neutral", {}
+        if image is None: return False
+        results = face_mesh_module.process(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
+        if not results.multi_face_landmarks: return False
+        
+        metrics = get_facial_metrics(results.multi_face_landmarks[0].landmark)
+        calibration_frames.append(metrics)
+        
+        if len(calibration_frames) >= 3:
+            for key in baseline_metrics:
+                baseline_metrics[key] = sum(f[key] for f in calibration_frames) / len(calibration_frames)
+            baseline_calibrated = True
+            print(f"✅ BASELINE CALIBRATED: {baseline_metrics}")
+            return True
+        return False
+    except Exception as e:
+        print(f"Calibration error: {e}")
+        return False
+
+def get_emotion(landmarks):
+    metrics = get_facial_metrics(landmarks)
+    
+    visual_score = {
+        "happy": 0.0,
+        "sad": 0.0,
+        "surprise": 0.0,
+        "angry": 0.0,
+        "neutral": 0.0
+    }
+    
+    if not baseline_calibrated:
+        visual_score["neutral"] = 1.0
+        return visual_score, metrics, "Neutral", 0.5
+    
+    # Calculate deviations
+    dev_smile = metrics["mouth_width"] / (baseline_metrics.get("mouth_width", 1.0) if baseline_metrics.get("mouth_width", 0) > 0 else 1.0)
+    dev_frown = metrics["frown_ratio"] / (baseline_metrics["frown_ratio"] if baseline_metrics["frown_ratio"] > 0 else 1.0)
+    dev_glabella = metrics["glabella"] / (baseline_metrics["glabella"] if baseline_metrics["glabella"] > 0 else 1.0)
+    dev_mar = metrics["mar"] / (baseline_metrics["mar"] if baseline_metrics["mar"] > 0 else 1.0)
+    dev_eye_open = metrics["eye_open"] / (baseline_metrics["eye_open"] if baseline_metrics["eye_open"] > 0 else 1.0)
+    
+    any_deviation = False
+    
+    # Require a 5% increase in pure width to trigger "Happy" to prevent false positives from talking
+    if dev_smile > 1.05:
+        visual_score["happy"] = min(1.0, (dev_smile - 1.05) * 15)
+        any_deviation = True
+        
+    if dev_frown < 0.97: # Slightly softer constraint for sadness
+        visual_score["sad"] = min(1.0, (0.97 - dev_frown) * 15)
+        any_deviation = True
+        
+    # Surprise must also involve widened eyes to prevent regular talking or sadness from triggering MAR
+    if dev_mar > 1.20 and dev_eye_open > 1.03:
+        visual_score["surprise"] = min(1.0, (dev_mar - 1.20) * 3)
+        any_deviation = True
+        
+    if dev_glabella < 0.98: # Glabella doesn't squeeze much, make constraint softer
+        visual_score["angry"] = min(1.0, (0.98 - dev_glabella) * 15)
+        any_deviation = True
+        
+    if not any_deviation or max(visual_score.values()) < 0.20:
+        visual_score["neutral"] = 1.0
+        
+    best_emotion = max(visual_score, key=visual_score.get)
+    confidence = max(0.5, visual_score[best_emotion])
+    
+    if best_emotion == "neutral":
+        confidence = 0.85
+        
+    return visual_score, metrics, best_emotion.capitalize(), confidence
+
+def analyze_face(image_path):
+    default_payload = {
+        "visual_score": {"neutral": 1.0},
+        "confidence": 0.5,
+        "timestamp": datetime.datetime.now().strftime("%H:%M:%S"),
+        "main_emotion": "Neutral"
+    }
+    try:
+        image = cv2.imread(image_path)
+        if image is None: return default_payload, {}
 
         results = face_mesh_module.process(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
+        if not results.multi_face_landmarks: return default_payload, {}
 
-        if not results.multi_face_landmarks:
-            return "Neutral", {} # Return Neutral if no face is found
-
-        # 1. Get the landmarks for the FIRST face detected
         landmarks = results.multi_face_landmarks[0].landmark
+        visual_score, metrics, main_emotion_str, conf = get_emotion(landmarks) 
         
-        # 2. Pass THAT variable to your get_emotion function
-        emotion_text, metrics = get_emotion(landmarks) 
-        
-        return emotion_text, metrics
+        payload = {
+            "visual_score": visual_score,
+            "confidence": round(conf, 2),
+            "timestamp": datetime.datetime.now().strftime("%H:%M:%S"),
+            "main_emotion": main_emotion_str
+        }
+        return payload, metrics
 
     except Exception as e:
         print(f"Error in analyze_face: {e}")
-        return "Neutral", {}
+        return default_payload, {}
 
 def detect_emotion_video():
     """

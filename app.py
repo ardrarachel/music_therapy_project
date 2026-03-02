@@ -8,7 +8,6 @@ import mediapipe as mp
 
 from flask import Flask, render_template, request, jsonify
 
-
 from audio_logic import start_music_therapy, analyze_voice_input
 import fusion_engine   # teammate's module
 
@@ -35,7 +34,17 @@ def index():
 
 # ---------------- FACE EMOTION (Teammate 1) ----------------
 # Restoring the MISSING /detect_face route
-from real_emotion import analyze_face # Make sure this is at the top
+from real_emotion import analyze_face, calibrate_baseline # Make sure this is at the top
+
+@app.route('/calibrate', methods=['POST'])
+def calibrate():
+    if 'face_image' not in request.files:
+        return jsonify({'status': 'error'}), 400
+    file = request.files['face_image']
+    image_path = "temp_calib.jpg"
+    file.save(image_path)
+    calibrated = calibrate_baseline(image_path)
+    return jsonify({'calibrated': calibrated})
 
 import traceback # Add this at the top of app.py
 @app.route('/detect_face', methods=['POST'])
@@ -53,19 +62,19 @@ def detect_face():
         file.save(image_path)
 
         # 3. Call your MediaPipe function
-        emotion_text, metrics = analyze_face(image_path)
+        emotion_payload, metrics = analyze_face(image_path)
         
-        # 4. Extract just the main emotion word (e.g., "Happy" from "Happy: Corners lifted")
-        main_emotion = emotion_text.split(":")[0] 
+        # 4. Extract just the main emotion word
+        main_emotion = emotion_payload.get('main_emotion', 'Neutral')
         
         # --- NEW CODE: Update Global State so Fusion Engine sees it ---
-        current_state['face_emotion'] = main_emotion
+        current_state['face_emotion'] = emotion_payload # Store the whole dict
         print(f"   [FACE CAPTURE] State updated to: {main_emotion}")
         
         # 5. Send clean JSON back to JavaScript
         return jsonify({
             'emotion': main_emotion,
-            'details': emotion_text,
+            'details': emotion_payload,
             'metrics': metrics
         })
 
@@ -82,6 +91,7 @@ def process_voice_answer():
         return jsonify({"error": "No audio"}), 400
 
     file = request.files['audio_data']
+    
     filepath = os.path.join(UPLOAD_FOLDER, "response.wav")
     file.save(filepath)
 
@@ -102,9 +112,14 @@ def process_voice_answer():
     current_state['last_spoken_text'] = user_text
 
     # --------- FUSION ENGINE DECIDES FINAL MOOD ----------
-    # Grab the recently detected face. If they haven't sent a face recently, it holds the last one.
-    face_val = current_state['face_emotion']
-    face_data = {'emotion': face_val, 'confidence': 0.8} # Mock confidence for face
+    # Grab the recently detected face.
+    face_payload = current_state['face_emotion']
+    if isinstance(face_payload, dict):
+        face_data = face_payload # Passes visual_score, confidence, etc.
+        face_val = face_payload.get('main_emotion', 'Neutral')
+    else:
+        face_data = {'emotion': face_payload, 'confidence': 0.5}
+        face_val = face_payload
     
     # Reset face emotion back to Neutral after consuming it, preventing permanent stuck states
     current_state['face_emotion'] = "Neutral"
@@ -130,4 +145,4 @@ def process_voice_answer():
 
 # ---------------- RUN SERVER ----------------
 if __name__ == '__main__':
-    app.run(debug=False)
+    app.run(port=5001, debug=False)
