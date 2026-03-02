@@ -43,14 +43,88 @@ function playEmotionMusic(emotion) {
 }
 
 // ---------------- FACE DETECTION & VOICE TRIGGER ----------------
-let faceDetectionInterval = null; // We'll keep a reference to a poll loop for AudioContext
+let faceDetectionInterval = null;
+
+// --- WAV ENCODER VARIABLES ---
+let audioDataBuffers = [];
+let recordingSampleRate = 44100;
+
+function mergeBuffers(channelBuffer, recordingLength) {
+    let result = new Float32Array(recordingLength);
+    let offset = 0;
+    for (let i = 0; i < channelBuffer.length; i++) {
+        result.set(channelBuffer[i], offset);
+        offset += channelBuffer[i].length;
+    }
+    return result;
+}
+
+function writeString(view, offset, string) {
+    for (let i = 0; i < string.length; i++) {
+        view.setUint8(offset + i, string.charCodeAt(i));
+    }
+}
+
+function encodeWAV(samples) {
+    let buffer = new ArrayBuffer(44 + samples.length * 2);
+    let view = new DataView(buffer);
+
+    // RIFF chunk descriptor
+    writeString(view, 0, 'RIFF');
+    view.setUint32(4, 36 + samples.length * 2, true);
+    writeString(view, 8, 'WAVE');
+    // FMT sub-chunk
+    writeString(view, 12, 'fmt ');
+    view.setUint32(16, 16, true); // chunkSize
+    view.setUint16(20, 1, true); // wFormatTag
+    view.setUint16(22, 1, true); // wChannels: stereo (2 channels)
+    view.setUint32(24, recordingSampleRate, true); // dwSamplesPerSec
+    view.setUint32(28, recordingSampleRate * 2, true); // dwAvgBytesPerSec
+    view.setUint16(32, 2, true); // wBlockAlign
+    view.setUint16(34, 16, true); // wBitsPerSample
+    // data sub-chunk
+    writeString(view, 36, 'data');
+    view.setUint32(40, samples.length * 2, true);
+
+    // PCM samples
+    let offset = 44;
+    for (let i = 0; i < samples.length; i++, offset += 2) {
+        let s = Math.max(-1, Math.min(1, samples[i]));
+        view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+    }
+    return new Blob([view], { type: 'audio/wav' });
+}
 let audioAnalyser = null;
 let audioDataArray = null;
 let lastFaceTriggerTime = 0;
 
 function startFaceDetection() {
-    // We no longer trigger unconditionally. We wait for user to start recording
-    // and let the voice trigger capture it.
+    // Baseline Calibration
+    let calibCount = 0;
+    statusText.innerText = "Calibrating camera... Please look at the screen and keep a neutral face.";
+
+    let calibInterval = setInterval(async () => {
+        let blob = await captureFaceFrame();
+        if (blob) {
+            let fd = new FormData();
+            fd.append("face_image", blob);
+            fetch("/calibrate", { method: "POST", body: fd })
+                .then(res => res.json())
+                .then(data => {
+                    if (data.calibrated) {
+                        clearInterval(calibInterval);
+                        statusText.innerText = "Calibration Complete! Ready to analyze.";
+                        console.log("✅ Camera baseline calibrated");
+                    }
+                }).catch(e => console.error(e));
+        }
+        calibCount++;
+        // Timeout
+        if (calibCount > 10) {
+            clearInterval(calibInterval);
+            statusText.innerText = "Calibration timeout. Proceeding with defaults.";
+        }
+    }, 500);
 }
 
 function captureFaceFrame() {
@@ -85,11 +159,11 @@ function sendFaceToBackend(faceBlob) {
                 if (data.metrics) {
                     const m = data.metrics;
                     const html = `
-                        <div><b>Happy (Smile):</b> ${m.smile} <span style="color:${m.smile > 0.015 ? 'green' : 'gray'}">(>0.015)</span></div>
-                        <div><b>Sad (Frown):</b> ${m.smile} <span style="color:${m.smile < -0.002 ? 'green' : 'gray'}">(<-0.002)</span></div>
+                        <div><b>Happy (Smile):</b> ${m.smile} <span style="color:${m.smile > 0.005 ? 'green' : 'gray'}">(>0.005)</span></div>
+                        <div><b>Sad (Frown):</b> ${m.smile} <span style="color:${m.smile < -0.010 ? 'green' : 'gray'}">(<-0.010)</span></div>
                         <div><b>Sad (EyeOpen):</b> ${m.eye_open} <span style="color:${m.eye_open < 0.03 ? 'green' : 'gray'}">(<0.03)</span></div>
-                        <div><b>Surprise (Mouth):</b> ${m.mar} <span style="color:${m.mar > 0.20 ? 'green' : 'gray'}">(>0.20)</span></div>
-                        <div><b>Angry (BrowDist):</b> ${m.glabella} <span style="color:${m.glabella < 0.285 ? 'green' : 'gray'}">(<0.285)</span></div>
+                        <div><b>Surprise (Mouth):</b> ${m.mar} <span style="color:${m.mar > 0.15 ? 'green' : 'gray'}">(>0.15)</span></div>
+                        <div><b>Angry (BrowDist):</b> ${m.glabella} <span style="color:${m.glabella < 0.28 ? 'green' : 'gray'}">(<0.28)</span></div>
                     `;
                     document.getElementById("face-metrics").innerHTML = html;
                 }
@@ -98,60 +172,7 @@ function sendFaceToBackend(faceBlob) {
         .catch(err => console.error("Face detection error:", err));
 }
 
-// --- WAV ENCODING HELPERS ---
-function bufferToWave(abuffer, len) {
-    let numOfChan = abuffer.numberOfChannels,
-        length = len * numOfChan * 2 + 44,
-        buffer = new ArrayBuffer(length),
-        view = new DataView(buffer),
-        channels = [], i, sample,
-        offset = 0,
-        pos = 0;
-
-    // write WAVE header
-    setUint32(0x46464952);                         // "RIFF"
-    setUint32(length - 8);                         // file length - 8
-    setUint32(0x45564157);                         // "WAVE"
-
-    setUint32(0x20746d66);                         // "fmt " chunk
-    setUint32(16);                                 // length = 16
-    setUint16(1);                                  // PCM (uncompressed)
-    setUint16(numOfChan);
-    setUint32(abuffer.sampleRate);
-    setUint32(abuffer.sampleRate * 2 * numOfChan); // avg. bytes/sec
-    setUint16(numOfChan * 2);                      // block-align
-    setUint16(16);                                 // 16-bit (hardcoded in this example)
-
-    setUint32(0x61746164);                         // "data" - chunk
-    setUint32(length - pos - 4);                   // chunk length
-
-    // write interleaved data
-    for (i = 0; i < abuffer.numberOfChannels; i++)
-        channels.push(abuffer.getChannelData(i));
-
-    while (pos < len) {
-        for (i = 0; i < numOfChan; i++) {             // interleave channels
-            sample = Math.max(-1, Math.min(1, channels[i][offset])); // clamp
-            sample = (0.5 + sample < 0 ? sample * 32768 : sample * 32767) | 0; // scale to 16-bit signed int
-            view.setInt16(pos, sample, true);          // write 16-bit sample
-            pos += 2;
-        }
-        offset++;                                     // next source sample
-    }
-
-    // create Blob
-    return new Blob([buffer], { type: "audio/wav" });
-
-    function setUint16(data) {
-        view.setUint16(pos, data, true);
-        pos += 2;
-    }
-
-    function setUint32(data) {
-        view.setUint32(pos, data, true);
-        pos += 4;
-    }
-}
+// --- (Removed old WebM bufferToWave decoder here) ---
 
 // Toggle Button Logic
 recordBtn.onclick = () => {
@@ -191,8 +212,8 @@ async function startRecording() {
             }
             let rms = Math.sqrt(sumSquares / audioDataArray.length);
 
-            // Trigger Threshold = 0.02, Throttled to 1 face cap per 500ms
-            if (rms > 0.02) {
+            // Trigger Threshold = 0.015, Throttled to 1 face cap per 500ms
+            if (rms > 0.015) {
                 let now = Date.now();
                 if (now - lastFaceTriggerTime > 500) {
                     lastFaceTriggerTime = now;
@@ -209,34 +230,36 @@ async function startRecording() {
         const metricsDisplay = document.getElementById("face-metrics");
         if (metricsDisplay) metricsDisplay.innerHTML = "Waiting for face data...";
 
-        recorder = new MediaRecorder(audioStream);
-        audioChunks = []; // Reset chunks
+        // --- NATIVE WAV RECORDER INITIATION ---
+        audioDataBuffers = [];
+        let recorderSource = audioContext.createMediaStreamSource(audioStream);
+        let processor = audioContext.createScriptProcessor(4096, 1, 1);
+        recordingSampleRate = audioContext.sampleRate;
 
-        recorder.ondataavailable = e => audioChunks.push(e.data);
+        recorderSource.connect(processor);
+        processor.connect(audioContext.destination);
 
-        recorder.onstop = async () => {
-            isRecording = false;
-            statusText.innerText = "Processing audio...";
-            recordBtn.innerText = "Record Answer";
-            recordBtn.disabled = true;
-
-            const webmBlob = new Blob(audioChunks, { type: 'audio/webm' });
-            const arrayBuffer = await webmBlob.arrayBuffer();
-            const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
-            const wavBlob = bufferToWave(audioBuffer, audioBuffer.length);
-
-            statusText.innerText = "Sending data...";
-
-            // We no longer capture an empty/resting face frame here at the end.
-            // We rely on the acoustic trigger that fired WHILE the user was speaking.
-            sendAudioToBackend(wavBlob, activeFaceBlob);
+        processor.onaudioprocess = function (e) {
+            if (!isRecording) return;
+            audioDataBuffers.push(new Float32Array(e.inputBuffer.getChannelData(0)));
         };
 
-        recorder.start();
+        // Save reference so we can disconnect it
+        recorder = { source: recorderSource, processor };
+
         isRecording = true;
 
         statusText.innerText = "Listening... (Click to Stop)";
-        recordBtn.innerText = "Stop Listening";
+        recordBtn.innerHTML = "⏹️ Stop Speaking";
+
+        // Capture ONE face strictly while the user is *actually speaking* 
+        // We'll give them 1 second to start talking and make an expression
+        setTimeout(() => {
+            if (isRecording) {
+                console.log("📸 Triggering mid-speech Active Face Capture!");
+                triggerVoiceSynchronizedFaceCapture();
+            }
+        }, 1000);
 
         setTimeout(() => {
             if (isRecording) stopRecording();
@@ -251,20 +274,53 @@ async function startRecording() {
 }
 
 function stopRecording() {
-    // Only stop if the recorder exists and is active
-    if (recorder && recorder.state !== "inactive") {
-        recorder.stop();
+    try {
+        if (!isRecording) return;
+        isRecording = false;
+
+        if (recorder) {
+            if (recorder.source) recorder.source.disconnect();
+            if (recorder.processor) recorder.processor.disconnect();
+        }
 
         if (faceDetectionInterval) {
             clearInterval(faceDetectionInterval);
         }
 
-        // IMPORTANT: Stop all tracks in the stream to turn off the mic light
         if (audioStream) {
             audioStream.getTracks().forEach(track => track.stop());
         }
 
-        console.log("Recording stopped.");
+        console.log("Recording stopped. Processing...");
+        statusText.innerText = "Processing Your Request...";
+        recordBtn.innerText = "⏳ Processing...";
+        recordBtn.disabled = true;
+
+        let mergedBytes = 0;
+        for (let i = 0; i < audioDataBuffers.length; i++) {
+            mergedBytes += audioDataBuffers[i].length;
+        }
+
+        console.log("Merged bytes: ", mergedBytes);
+
+        if (mergedBytes === 0) {
+            console.warn("No audio captured.");
+            statusText.innerText = "No audio recorded. Please try again.";
+            recordBtn.disabled = false;
+            recordBtn.innerHTML = "🎙️ Start Speaking";
+            return;
+        }
+
+        const mergedAudio = mergeBuffers(audioDataBuffers, mergedBytes);
+        const wavBlob = encodeWAV(mergedAudio);
+
+        console.log("Wav blob created size: ", wavBlob.size);
+        sendAudioToBackend(wavBlob, activeFaceBlob);
+    } catch (error) {
+        console.error("Crash inside stopRecording:", error);
+        statusText.innerText = "Error local processing: " + error.message;
+        recordBtn.disabled = false;
+        recordBtn.innerHTML = "🎙️ Start Speaking";
     }
 }
 
