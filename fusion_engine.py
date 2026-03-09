@@ -7,7 +7,7 @@ def analyze_text_sentiment(user_text):
     Part 1: Text Sensor Logic (VADER Lexicon-Based Sentiment Analysis)
     Determines emotion from text using Valance Aware Dictionary and sEntiment Reasoner.
     """
-    if not user_text.strip():
+    if not user_text.strip() or user_text.strip() == "(Unintelligible)" or user_text.strip() == "No transcription":
         return "Neutral", 0.0
 
     analyzer = SentimentIntensityAnalyzer()
@@ -39,12 +39,16 @@ def fuse_multimodal_sensors(face_data, voice_data, user_text):
     # --- STEP A: Gather Inputs ---
     
     # 1. Face Input
-    # face_data expected: {'emotion': 'Happy', 'confidence': 0.65}
-    # If simple string comes in, normalize it.
-    face_emo = face_data.get('emotion', "Neutral")
-    # Clean up descriptive strings like "Happy: Corners lifted..."
-    if ":" in face_emo: face_emo = face_emo.split(":")[0]
-    face_conf = face_data.get('confidence', 0.60) # Default if measuring is hard
+    if 'visual_score' in face_data:
+        # Expected new structure from backend calibration
+        face_emo = face_data.get('main_emotion', 'Neutral')
+        face_conf = face_data.get('confidence', 0.5)
+    else:
+        # Fallback to old behavior
+        face_emo = face_data.get('emotion', "Neutral")
+        if ":" in face_emo: face_emo = face_emo.split(":")[0]
+        face_conf = face_data.get('confidence', 0.60)
+
     
     # 2. Voice Input
     voice_emo = voice_data.get('emotion', "Neutral")
