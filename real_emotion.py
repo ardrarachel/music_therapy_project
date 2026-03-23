@@ -2,313 +2,447 @@ import os
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
 import cv2
-import math
-import mediapipe as mp
+import numpy as np
 import datetime
+import time
 
-# Direct access to the internal modules to bypass the "solutions" error
+# Try to import keras with fallback
 try:
-    import mediapipe as mp
-    mp_face_mesh = mp.solutions.face_mesh
-except ImportError:
-    # Fallback for newer MediaPipe structures
-    import mediapipe as mp
-    mp_face_mesh = mp.solutions.face_mesh
-# Initialize using the direct reference
-face_mesh_module = mp_face_mesh.FaceMesh(
-    static_image_mode=True,
-    max_num_faces=1,
-    min_detection_confidence=0.5,
-    min_tracking_confidence=0.5
-)
+    from tensorflow.keras.models import load_model
+except:
+    from keras.models import load_model
+
+# Define possible model paths (try multiple options)
+MODEL_PATHS = [
+    "models/emotion_cnn_model.hdf5",
+    "models/emotion_cnn_model.h5",
+    "emotion_cnn_model.hdf5",
+    "emotion_cnn_model.h5",
+    "emotion_cnn_model.keras",
+    "models/emotion_cnn_model.keras"
+]
+
+# Find and load the model
+model = None
+MODEL_PATH = None
+
+for path in MODEL_PATHS:
+    if os.path.exists(path):
+        MODEL_PATH = path
+        print(f"✅ Found model at: {MODEL_PATH}")
+        try:
+            # Try loading with compile=False to avoid compatibility issues
+            model = load_model(MODEL_PATH, compile=False)
+            print("✅ Model loaded successfully!")
+            break
+        except Exception as e:
+            print(f"⚠️ Failed to load model from {path}: {e}")
+            continue
+
+if model is None:
+    print("❌ ERROR: Could not load emotion model from any location.")
+    print("Please ensure the model file exists in one of these locations:")
+    for path in MODEL_PATHS:
+        print(f"   - {path}")
+    print("\nIf you don't have the model, you'll need to train it first.")
+    # Don't exit, but set a flag
+    MODEL_LOADED = False
+else:
+    MODEL_LOADED = True
+
+# Emotion labels used in FER2013
+emotion_labels = [
+    "Angry",
+    "Disgust",
+    "Fear",
+    "Happy",
+    "Sad",
+    "Surprise",
+    "Neutral"
+]
+
+# Load OpenCV face detector with fallback
+face_cascade = None
+cascade_paths = [
+    cv2.data.haarcascades + "haarcascade_frontalface_default.xml",
+    "haarcascade_frontalface_default.xml"
+]
+
+for path in cascade_paths:
+    if os.path.exists(path):
+        face_cascade = cv2.CascadeClassifier(path)
+        print(f"✅ Loaded face detector from: {path}")
+        break
+
+if face_cascade is None:
+    print("❌ ERROR: Could not load face cascade classifier.")
+    FACE_DETECTOR_LOADED = False
+else:
+    FACE_DETECTOR_LOADED = True
+
+# Baseline calibration variables
+baseline_emotion = "Neutral"
+baseline_confidence = 0.5
+baseline_timestamp = None
 
 
-
-
-baseline_metrics = {
-    "smile_ratio": 0.0,
-    "mar": 0.0,
-    "glabella": 0.0,
-    "eye_open": 0.0,
-    "lip_drop": 0.0,
-    "mouth_width": 0.0
-}
-calibration_frames = []
-baseline_calibrated = False
-
-def calculate_distance(point1, point2):
+def preprocess_face(face_img):
     """
-    Helper function to calculate Euclidean distance between two points (x, y).
+    Resize and normalize face image for CNN input
     """
-    return math.hypot(point2[0] - point1[0], point2[1] - point1[1])
-
-def get_facial_metrics(landmarks):
-    def get_pt(idx):
-        return (landmarks[idx].x, landmarks[idx].y)
+    try:
+        face = cv2.resize(face_img, (48, 48))
+        face = face.astype("float32") / 255.0
         
-    def calc_dist(idx1, idx2):
-        return calculate_distance(get_pt(idx1), get_pt(idx2))
+        # Add batch and channel dimensions
+        face = np.reshape(face, (1, 48, 48, 1))
+        return face
+    except Exception as e:
+        print(f"Error preprocessing face: {e}")
+        return None
 
-    face_width = calc_dist(33, 263)
-    if face_width == 0: face_width = 0.001
-    
-    lip_v_dist = calc_dist(13, 14)
-    if lip_v_dist == 0: lip_v_dist = 0.001
-    
-    mouth_width = calc_dist(61, 291)
-    # Using vertical lip distance as denominator is unstable during speech/frowns.
-    # We will normalize smile width by face width instead.
-    smile_ratio = mouth_width / face_width
-    
-    mar = lip_v_dist / mouth_width if mouth_width > 0 else 0
-    
-    glabella = calc_dist(55, 285) / face_width
-    
-    avg_eye_open = ((calc_dist(159, 145) + calc_dist(386, 374)) / 2) / face_width
-    
-    # Isolate true vertical movement of lip corners relative to the nose tip (4).
-    # Face axis from chin (152) to forehead (10)
-    axis_dx = landmarks[10].x - landmarks[152].x
-    axis_dy = landmarks[10].y - landmarks[152].y
-    axis_len = math.hypot(axis_dx, axis_dy) + 0.0001
-    v_x, v_y = axis_dx/axis_len, axis_dy/axis_len
-    
-    def get_vertical_dist(idx_bottom, idx_top):
-        dx = landmarks[idx_top].x - landmarks[idx_bottom].x
-        dy = landmarks[idx_top].y - landmarks[idx_bottom].y
-        return (dx * v_x + dy * v_y)
-        
-    lip_drop_left = get_vertical_dist(61, 4)
-    lip_drop_right = get_vertical_dist(291, 4)
-    lip_drop = (lip_drop_left + lip_drop_right) / (2 * face_width)
-    
-    return {
-        "smile_ratio": smile_ratio,
-        "mar": mar,
-        "glabella": glabella,
-        "eye_open": avg_eye_open,
-        "lip_drop": lip_drop,
-        "mouth_width": mouth_width
-    }
 
-def calibrate_baseline(image_path):
-    global baseline_calibrated, baseline_metrics, calibration_frames
+def calibrate_baseline(image_path=None, duration_seconds=3):
+    """
+    Calibrate baseline emotion from a neutral face.
+    If image_path is provided, analyze that image.
+    Otherwise, use webcam to capture a neutral face.
+    """
+    global baseline_emotion, baseline_confidence, baseline_timestamp
+    
+    print("🔧 Starting baseline calibration...")
+    
+    if not MODEL_LOADED or not FACE_DETECTOR_LOADED:
+        print("⚠️ Model or face detector not loaded. Using default baseline.")
+        return {
+            "baseline_emotion": baseline_emotion,
+            "baseline_confidence": baseline_confidence,
+            "baseline_timestamp": baseline_timestamp
+        }
     
     try:
-        image = cv2.imread(image_path)
-        if image is None: return False
-        results = face_mesh_module.process(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
-        if not results.multi_face_landmarks: return False
-        
-        metrics = get_facial_metrics(results.multi_face_landmarks[0].landmark)
-        calibration_frames.append(metrics)
-        
-        if len(calibration_frames) >= 3:
-            for key in baseline_metrics:
-                baseline_metrics[key] = sum(f[key] for f in calibration_frames) / len(calibration_frames)
-            baseline_calibrated = True
-            print(f"✅ BASELINE CALIBRATED: {baseline_metrics}")
-            return True
-        return False
-    except Exception as e:
-        print(f"Calibration error: {e}")
-        return False
-
-def get_emotion(landmarks):
-    metrics = get_facial_metrics(landmarks)
-    
-    visual_score = {
-        "happy": 0.0,
-        "sad": 0.0,
-        "surprise": 0.0,
-        "angry": 0.0,
-        "neutral": 0.0
-    }
-    
-    if not baseline_calibrated:
-        visual_score["neutral"] = 1.0
-        return visual_score, metrics, "Neutral", 0.5
-    
-    # Calculate deviations
-    dev_smile_ratio = metrics["smile_ratio"] / (baseline_metrics.get("smile_ratio", 1.0) if baseline_metrics.get("smile_ratio", 0) > 0 else 1.0)
-    dev_lip_drop = metrics["lip_drop"] / (baseline_metrics["lip_drop"] if baseline_metrics["lip_drop"] > 0 else 1.0)
-    dev_glabella = metrics["glabella"] / (baseline_metrics["glabella"] if baseline_metrics["glabella"] > 0 else 1.0)
-    dev_mar = metrics["mar"] / (baseline_metrics["mar"] if baseline_metrics["mar"] > 0 else 1.0)
-    dev_eye_open = metrics["eye_open"] / (baseline_metrics["eye_open"] if baseline_metrics["eye_open"] > 0 else 1.0)
-    
-    print(f"[DEBUG DEV] smile:{dev_smile_ratio:.2f} | lip_drop:{dev_lip_drop:.2f} | glabella:{dev_glabella:.2f} | mar:{dev_mar:.2f} | eye:{dev_eye_open:.2f}")
-
-    any_deviation = False
-    
-    # 1. HAPPY (Smile):
-    # A true smile pulls the lip corners UP towards the nose (lip_drop < 1.0).
-    # We trigger happy if the mouth widens AND the corners don't physically drop down like a frown.
-    if dev_smile_ratio > 1.05 and dev_lip_drop < 1.05:
-        visual_score["happy"] = min(1.0, (dev_smile_ratio - 1.05) * 12.0)
-        any_deviation = True
-        
-    # 2. SAD: Lip corners drop OR pout (mouth narrows) OR wry sadness (squint + slight smile).
-    # When sad, your lip corners either pull DOWN visibly (lip_drop >= 1.03) 
-    # OR you pout, causing the mouth to narrow (smile_ratio <= 0.98) and the lips to push down very slightly (lip_drop >= 1.00)
-    # OR you exhibit wry sadness (squinting hard with a relaxed/slightly widened mouth and relaxed glabella).
-    if (dev_lip_drop >= 1.03 and dev_glabella > 0.90) or \
-       (dev_smile_ratio <= 0.98 and dev_lip_drop >= 1.00) or \
-       (dev_eye_open <= 0.85 and dev_glabella >= 1.00 and 1.0 <= dev_smile_ratio <= 1.05 and dev_lip_drop <= 0.99): 
-        sad_score = 0.0
-        if dev_lip_drop >= 1.03:
-            sad_score = (dev_lip_drop - 1.03) * 15
-        elif dev_smile_ratio <= 0.98:
-            sad_score = (0.98 - dev_smile_ratio) * 15 + (dev_lip_drop - 0.99) * 10
-        elif dev_eye_open <= 0.85:
-            sad_score = (0.85 - dev_eye_open) * 15
-        visual_score["sad"] = min(1.0, sad_score)
-        any_deviation = True
-        
-    # 3. SURPRISE: Real surprise demands an open mouth AND widened eyes
-    if dev_mar > 1.50 and dev_eye_open > 1.10:
-        visual_score["surprise"] = min(1.0, (dev_mar - 1.50) * 2)
-        any_deviation = True
-        
-    # 4. ANGRY: Glabella shrink OR extreme lip drop + squint OR tight grimace.
-    is_angry = False
-    ang_score = 0.0
-    
-    # Squeezing glabella
-    if dev_glabella <= 0.96: 
-        is_angry = True
-        ang_score += (0.96 - dev_glabella) * 20
-        
-    # Massive frown combined with anger traits (squint or glabella squeeze)
-    if dev_lip_drop >= 1.05 and (dev_eye_open <= 0.88 or dev_glabella <= 0.96): 
-        is_angry = True
-        if dev_eye_open <= 0.88:
-            ang_score += (0.88 - dev_eye_open) * 15
-        if dev_glabella <= 0.96:
-            ang_score += (0.96 - dev_glabella) * 15
-        ang_score += (dev_lip_drop - 1.05) * 15 
-        
-    # Tight jaw/grimace (narrow mouth) + slight glabella squeeze or slight squint
-    if dev_smile_ratio <= 0.98 and (dev_glabella <= 0.99 or dev_eye_open <= 0.92):
-        is_angry = True
-        if dev_glabella <= 0.99:
-            ang_score += (0.99 - dev_glabella) * 15
-        if dev_eye_open <= 0.92:
-            ang_score += (0.92 - dev_eye_open) * 15
-        ang_score += (0.98 - dev_smile_ratio) * 10
-        
-    # Intense Stare (relaxed mouth, heavy squint, slight glabella squeeze)
-    # MUST ensure smile_ratio is not extremely high (preventing false angry when laughing out loud)
-    if dev_eye_open <= 0.88 and dev_glabella <= 0.99 and dev_smile_ratio >= 0.98 and dev_smile_ratio < 1.10 and dev_lip_drop <= 1.02:
-        is_angry = True
-        ang_score += (0.88 - dev_eye_open) * 20 + (0.99 - dev_glabella) * 10
+        if image_path and os.path.exists(image_path):
+            # Analyze from image
+            result, _ = analyze_face(image_path)
+            if result:
+                baseline_emotion = result.get("main_emotion", "Neutral")
+                baseline_confidence = result.get("confidence", 0.5)
+                baseline_timestamp = result.get("timestamp", datetime.datetime.now().strftime("%H:%M:%S"))
+                print(f"✅ Baseline calibrated from image: {baseline_emotion} ({baseline_confidence})")
+        else:
+            # Use webcam for calibration
+            print("📸 Opening webcam for baseline calibration...")
+            print("Please look neutral for", duration_seconds, "seconds")
             
-    if is_angry:
-        visual_score["angry"] = min(1.0, ang_score)
-        any_deviation = True
+            cap = cv2.VideoCapture(0)
+            if not cap.isOpened():
+                print("❌ Cannot open camera for calibration")
+                return {
+                    "baseline_emotion": baseline_emotion,
+                    "baseline_confidence": baseline_confidence,
+                    "baseline_timestamp": baseline_timestamp
+                }
+            
+            start_time = time.time()
+            frames_processed = 0
+            emotion_counts = {}
+            
+            while time.time() - start_time < duration_seconds:
+                ret, frame = cap.read()
+                if not ret:
+                    break
+                
+                # Process frame
+                gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                faces = face_cascade.detectMultiScale(gray, 1.3, 5)
+                
+                for (x, y, w, h) in faces:
+                    face = gray[y:y+h, x:x+w]
+                    face_input = preprocess_face(face)
+                    
+                    if face_input is None:
+                        continue
+                    
+                    prediction = model.predict(face_input, verbose=0)
+                    emotion_index = int(np.argmax(prediction))
+                    emotion = emotion_labels[emotion_index]
+                    
+                    # Count emotions
+                    emotion_counts[emotion] = emotion_counts.get(emotion, 0) + 1
+                    frames_processed += 1
+                    
+                    # Display calibration message
+                    cv2.putText(frame, "Calibrating... Please stay neutral", 
+                               (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                    cv2.putText(frame, f"Time left: {int(duration_seconds - (time.time() - start_time))}s",
+                               (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                    cv2.imshow("Baseline Calibration", frame)
+                    
+                    if cv2.waitKey(1) & 0xFF == 27:
+                        break
+                
+                cv2.imshow("Baseline Calibration", frame)
+                if cv2.waitKey(1) & 0xFF == 27:
+                    break
+            
+            cap.release()
+            cv2.destroyAllWindows()
+            
+            # Determine baseline emotion (most frequent)
+            if emotion_counts:
+                baseline_emotion = max(emotion_counts, key=emotion_counts.get)
+                baseline_confidence = emotion_counts[baseline_emotion] / frames_processed if frames_processed > 0 else 0.5
+                baseline_timestamp = datetime.datetime.now().strftime("%H:%M:%S")
+                print(f"✅ Baseline calibrated: {baseline_emotion} (confidence: {baseline_confidence:.2f})")
+                print(f"   Processed {frames_processed} frames")
+            else:
+                print("⚠️ No faces detected during calibration. Using default baseline.")
         
-    # Conflict Resolution:
-    # If the system detects an intense stare or tight jaw (Angry traits), suppress Happy.
-    # However, if the smile ratio is HUGE (> 1.10), the squinting is just from laughing hard
-    if (dev_eye_open <= 0.85 or is_angry) and dev_smile_ratio < 1.10:
-        visual_score["happy"] = 0.0
+        return {
+            "baseline_emotion": baseline_emotion,
+            "baseline_confidence": baseline_confidence,
+            "baseline_timestamp": baseline_timestamp
+        }
         
-    # If the system detects a genuine lip drop (frown) or narrowing pout, suppress Happy.
-    if dev_lip_drop >= 1.03 or dev_smile_ratio <= 0.98:
-        visual_score["happy"] = 0.0
-        
-    # If Angry traits strongly compete with Sad, let Angry dominate
-    if visual_score["angry"] >= 0.5 and visual_score["angry"] >= visual_score["sad"]:
-        visual_score["sad"] *= 0.5
-        
-    # Strong glabella squeeze is definitively angry/concentrating, not purely sad
-    if dev_glabella <= 0.96 and visual_score["angry"] > 0.5:
-        visual_score["sad"] *= 0.2
-        
-    if visual_score["sad"] > 0.1 or visual_score["angry"] > 0.1:
-        if visual_score["happy"] < 0.5: # Only kill surprise/happy if it's not a dominant smile
-            visual_score["surprise"] = 0.0
-    if not any_deviation:
-        visual_score["neutral"] = 1.0
-        
-    best_emotion = max(visual_score, key=visual_score.get)
-    confidence = max(0.5, visual_score[best_emotion])
-    
-    if best_emotion == "neutral":
-        confidence = 0.85
-        
-    return visual_score, metrics, best_emotion.capitalize(), confidence
+    except Exception as e:
+        print(f"Error during calibration: {e}")
+        import traceback
+        traceback.print_exc()
+        return {
+            "baseline_emotion": baseline_emotion,
+            "baseline_confidence": baseline_confidence,
+            "baseline_timestamp": baseline_timestamp
+        }
+
 
 def analyze_face(image_path):
+    """
+    Analyze emotion from image file.
+    Returns payload compatible with fusion_engine.
+    """
+
     default_payload = {
         "visual_score": {"neutral": 1.0},
         "confidence": 0.5,
         "timestamp": datetime.datetime.now().strftime("%H:%M:%S"),
         "main_emotion": "Neutral"
     }
+
+    if not MODEL_LOADED:
+        print("⚠️ Model not loaded. Returning default payload.")
+        return default_payload, {}
+
     try:
+        # Check if image exists
+        if not os.path.exists(image_path):
+            print(f"⚠️ Image not found: {image_path}")
+            return default_payload, {}
+
         image = cv2.imread(image_path)
-        if image is None: return default_payload, {}
 
-        results = face_mesh_module.process(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
-        if not results.multi_face_landmarks: return default_payload, {}
+        if image is None:
+            print(f"⚠️ Could not read image: {image_path}")
+            return default_payload, {}
 
-        landmarks = results.multi_face_landmarks[0].landmark
-        visual_score, metrics, main_emotion_str, conf = get_emotion(landmarks) 
-        
-        payload = {
-            "visual_score": visual_score,
-            "confidence": round(conf, 2),
-            "timestamp": datetime.datetime.now().strftime("%H:%M:%S"),
-            "main_emotion": main_emotion_str
-        }
-        return payload, metrics
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+
+        faces = face_cascade.detectMultiScale(
+            gray,
+            scaleFactor=1.3,
+            minNeighbors=5,
+            minSize=(30, 30)
+        )
+
+        if len(faces) == 0:
+            print("⚠️ No faces detected in image")
+            return default_payload, {}
+
+        # Process the first face found
+        for (x, y, w, h) in faces:
+            face_img = gray[y:y+h, x:x+w]
+            face_input = preprocess_face(face_img)
+            
+            if face_input is None:
+                continue
+
+            # Make prediction
+            prediction = model.predict(face_input, verbose=0)
+            emotion_index = int(np.argmax(prediction))
+            confidence = float(np.max(prediction))
+
+            emotion = emotion_labels[emotion_index]
+
+            # Adjust confidence based on baseline if available
+            adjusted_confidence = confidence
+            if baseline_emotion and baseline_emotion != "Neutral":
+                # If baseline is not neutral, adjust confidence
+                if emotion == baseline_emotion:
+                    adjusted_confidence = max(0.3, confidence - 0.2)
+                else:
+                    adjusted_confidence = min(0.9, confidence + 0.1)
+
+            payload = {
+                "visual_score": {emotion.lower(): adjusted_confidence},
+                "confidence": round(adjusted_confidence, 2),
+                "timestamp": datetime.datetime.now().strftime("%H:%M:%S"),
+                "main_emotion": emotion,
+                "raw_confidence": round(confidence, 2),  # Keep raw confidence for debugging
+                "baseline_used": baseline_emotion if baseline_emotion else None
+            }
+
+            return payload, {}
+
+        return default_payload, {}
 
     except Exception as e:
         print(f"Error in analyze_face: {e}")
+        import traceback
+        traceback.print_exc()
         return default_payload, {}
+
 
 def detect_emotion_video():
     """
-    Opens the Webcam, draws the face mesh, and prints the calculated emotion 
-    on the screen. (Standalone Mode)
+    Standalone webcam testing mode with improved error handling
     """
-    cap = cv2.VideoCapture(0)
-    if not cap.isOpened():
-        print("Cannot open camera")
+
+    if not MODEL_LOADED or not FACE_DETECTOR_LOADED:
+        print("❌ Cannot start video detection. Model or face detector not loaded.")
         return
 
-    while True:
-        success, image = cap.read()
-        if not success:
-            break
+    cap = cv2.VideoCapture(0)
 
-        # Convert the BGR image to RGB.
-        image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        results = face_mesh_module.process(image_rgb)
+    if not cap.isOpened():
+        print("❌ Cannot open camera. Please check if camera is connected.")
+        return
 
-        if results.multi_face_landmarks:
-            for face_landmarks in results.multi_face_landmarks:
-                # Draw mesh (optional, simplified drawing points)
-                h, w, c = image.shape
-                for idx, lm in enumerate(face_landmarks.landmark):
-                    # Draw only key points to avoid clutter
-                    if idx in [13, 14, 61, 291, 55, 285]: 
-                        cx, cy = int(lm.x * w), int(lm.y * h)
-                        cv2.circle(image, (cx, cy), 2, (0, 255, 0), -1)
-
-                # Get Emotion
-                emotion_full = get_emotion(face_landmarks.landmark)
-                
-                # Display
-                cv2.putText(image, emotion_full, (20, 50), 
-                            cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
-
-        cv2.imshow('Geometric Emotion Detection', image)
-        if cv2.waitKey(5) & 0xFF == 27:
-            break
+    print("✅ Camera opened successfully. Press 'ESC' to exit.")
+    print("Press 'c' to recalibrate baseline")
     
+    # For performance, process every few frames
+    frame_count = 0
+    process_every_n_frames = 2
+
+    while True:
+        ret, frame = cap.read()
+
+        if not ret:
+            print("⚠️ Failed to grab frame")
+            break
+
+        frame_count += 1
+        
+        # Only process every nth frame for better performance
+        if frame_count % process_every_n_frames != 0:
+            cv2.imshow("CNN Emotion Detection", frame)
+            key = cv2.waitKey(1) & 0xFF
+            if key == 27:  # ESC
+                break
+            elif key == ord('c'):  # Recalibrate
+                calibrate_baseline(duration_seconds=3)
+            continue
+
+        # Convert to grayscale for face detection
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
+        # Detect faces
+        faces = face_cascade.detectMultiScale(
+            gray, 
+            scaleFactor=1.1,  # Slightly faster detection
+            minNeighbors=5,
+            minSize=(50, 50)  # Minimum face size
+        )
+
+        for (x, y, w, h) in faces:
+            # Extract face region
+            face = gray[y:y+h, x:x+w]
+            
+            # Preprocess and predict
+            face_input = preprocess_face(face)
+            
+            if face_input is None:
+                continue
+                
+            try:
+                prediction = model.predict(face_input, verbose=0)
+                emotion_index = int(np.argmax(prediction))
+                confidence = float(np.max(prediction))
+                emotion = emotion_labels[emotion_index]
+                
+                # Adjust for baseline
+                adjusted_confidence = confidence
+                if baseline_emotion and baseline_emotion != "Neutral":
+                    if emotion == baseline_emotion:
+                        adjusted_confidence = max(0.3, confidence - 0.2)
+                
+                # Display results
+                label = f"{emotion} ({adjusted_confidence:.2f})"
+                
+                # Show baseline info
+                if baseline_emotion:
+                    cv2.putText(frame, f"Baseline: {baseline_emotion}", 
+                               (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 1)
+                
+                # Color based on confidence
+                color = (0, int(255 * adjusted_confidence), int(255 * (1 - adjusted_confidence)))
+                
+                # Draw rectangle and label
+                cv2.rectangle(frame, (x, y), (x+w, y+h), color, 2)
+                cv2.putText(
+                    frame,
+                    label,
+                    (x, y-10),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.7,
+                    color,
+                    2
+                )
+                
+                # Add confidence bar
+                bar_width = int(w * adjusted_confidence)
+                cv2.rectangle(frame, (x, y+h+5), (x+bar_width, y+h+15), color, -1)
+                
+            except Exception as e:
+                print(f"Prediction error: {e}")
+                continue
+
+        # Show frame
+        cv2.imshow("CNN Emotion Detection", frame)
+
+        # Check for key presses
+        key = cv2.waitKey(1) & 0xFF
+        if key == 27:  # ESC
+            break
+        elif key == ord('c'):  # Recalibrate
+            calibrate_baseline(duration_seconds=3)
+
     cap.release()
     cv2.destroyAllWindows()
+    print("✅ Camera released")
+
 
 if __name__ == "__main__":
-    detect_emotion_video()
+    # You can choose to test with webcam or analyze a single image
+    print("🎭 CNN Emotion Detection System")
+    print("================================")
+    print("1. Start webcam emotion detection")
+    print("2. Analyze a single image")
+    print("3. Calibrate baseline only")
+    
+    choice = input("Enter your choice (1, 2, or 3): ").strip()
+    
+    if choice == "1":
+        detect_emotion_video()
+    elif choice == "2":
+        image_path = input("Enter image path: ").strip()
+        result, _ = analyze_face(image_path)
+        print(f"\n✅ Analysis Result:")
+        print(f"   Main Emotion: {result['main_emotion']}")
+        print(f"   Confidence: {result['confidence']}")
+        print(f"   Visual Score: {result['visual_score']}")
+        print(f"   Timestamp: {result['timestamp']}")
+    elif choice == "3":
+        calibrate_baseline(duration_seconds=5)
+    else:
+        print("Invalid choice. Starting webcam detection...")
+        detect_emotion_video()
