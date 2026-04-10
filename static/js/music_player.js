@@ -1,17 +1,18 @@
 // 🎵 Music Therapy Player — ISO Principle + Malayalam Priority
 
 const ISO_FLOW = {
-    "Sad": ["Sad", "Neutral", "Happy"],
-    "Angry": ["Angry", "Neutral", "Happy"],
-    "Fear": ["Fear", "Calm", "Happy"],
-    "Neutral": ["Neutral", "Happy"],
-    "Happy": ["Happy"]
+    "Sad":     ["Sad", "Neutral", "Happy"],
+    "Angry":   ["Angry", "Neutral", "Calm"],
+    "Fear":    ["Fear", "Calm", "Neutral"],
+    "Neutral": ["Neutral", "Calm"],      // ✅ gentle, no sudden Happy
+    "Happy":   ["Happy"],
+    "Calm":    ["Calm"]
 };
 
 // Malayalam + multilingual playlists
 const moodPlaylists = {
     "Sad": "37i9dQZF1DX7qK8ma5wgG1",
-    "Neutral": "37i9dQZF1DX4WYpdgoIcn6",
+    "Neutral": "5ffac613ed33406d",
     "Calm": "37i9dQZF1DX3rxVfibe1L0",
     "Happy": "37i9dQZF1DXdPec7aLTmlC",
     "Angry": "37i9dQZF1DWZUAeYvs88zc",
