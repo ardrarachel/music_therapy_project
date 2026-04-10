@@ -1,83 +1,104 @@
-// 🎵 Multimodal Music Therapy Player (ISO Principle Version)
+// 🎵 Music Therapy Player — ISO Principle + Malayalam Priority
 
-// -------- 🎧 MALAYALAM + GLOBAL ISO PLAYLIST FLOW --------
-const isoPlaylists = {
-    "Angry": [
-        "43j9sAZenNQcQ5A4ITyJ82", // intense
-        "5ZEQJAi8ILoLT9OlSxjtE7", // emotional release
-        "4hoQGGzv4M7f1YzfrIxPlL"  // calm
-    ],
-    "Sad": [
-        "37i9dQZF1DX7qK8ma5wgG1", // sad validation
-        "37i9dQZF1DX4WYpdgoIcn6", // neutral
-        "37i9dQZF1DX3rxVfibe1L0"  // calm
-    ],
-    "Fear": [
-        "37i9dQZF1DWX83CujKHHOn", // soothing
-        "37i9dQZF1DX4WYpdgoIcn6",
-        "37i9dQZF1DX3rxVfibe1L0"
-    ],
-    "Neutral": [
-        "0iBa6VlxiX2W7CKkHNdnns?si=678fbcd4a25d41c6",
-        "37i9dQZF1DX3rxVfibe1L0"
-    ],
-    "Happy": [
-        "37i9dQZF1DXdPec7aLTmlC"
-    ],
-    "Calm": [
-        "37i9dQZF1DX3rxVfibe1L0"
-    ]
+const ISO_FLOW = {
+    "Sad": ["Sad", "Neutral", "Happy"],
+    "Angry": ["Angry", "Neutral", "Happy"],
+    "Fear": ["Fear", "Calm", "Happy"],
+    "Neutral": ["Neutral", "Happy"],
+    "Happy": ["Happy"]
 };
 
-// -------- CREATE PLAYER UI --------
+// Malayalam + multilingual playlists
+const moodPlaylists = {
+    "Sad": "37i9dQZF1DX7qK8ma5wgG1",
+    "Neutral": "37i9dQZF1DX4WYpdgoIcn6",
+    "Calm": "37i9dQZF1DX3rxVfibe1L0",
+    "Happy": "37i9dQZF1DXdPec7aLTmlC",
+    "Angry": "37i9dQZF1DWZUAeYvs88zc",
+    "Fear": "37i9dQZF1DWX83CujKHHOn"
+};
+
+let lastMood = "";
+let isoIndex = 0;
+let isoSequence = [];
+
 function createMusicUI() {
-    // The UI is now statically built into index.html's .right-panel split layout. 
-    // We no longer need to dynamically append it to the bottom of the container.
-    return;
+    if (document.getElementById("spotifyPlayer")) return;
+
+    const container = document.querySelector(".container");
+
+    const section = document.createElement("div");
+    section.style.marginTop = "20px";
+
+    const title = document.createElement("h3");
+    title.innerText = "🎵 Therapy Playlist";
+
+    const iframe = document.createElement("iframe");
+    iframe.id = "spotifyPlayer";
+    iframe.style.borderRadius = "12px";
+    iframe.width = "100%";
+    iframe.height = "352";
+    iframe.frameBorder = "0";
+    iframe.allow = "autoplay; encrypted-media";
+
+    section.appendChild(title);
+    section.appendChild(iframe);
+    container.appendChild(section);
 }
 
-// -------- PLAY SINGLE PLAYLIST --------
-function playPlaylist(playlistId) {
+function playMood(mood) {
     const iframe = document.getElementById("spotifyPlayer");
     if (!iframe) return;
 
+    const playlistId = moodPlaylists[mood] || moodPlaylists["Neutral"];
+
     iframe.src =
-        "https://open.spotify.com/embed/playlist/" +
-        playlistId +
-        "?utm_source=generator&autoplay=1";
+        `https://open.spotify.com/embed/playlist/${playlistId}?utm_source=generator&autoplay=1`;
+
+    console.log("🎵 Playing:", mood);
 }
 
-// -------- ISO SEQUENCE PLAYER (FULL FIRST SONG) --------
-let isoTimer = null;
+function startISOFlow(mood) {
+    isoSequence = ISO_FLOW[mood] || ["Neutral"];
+    isoIndex = 0;
+    playMood(isoSequence[isoIndex]);
 
-function playIsoSequence(mood) {
-    const sequence = isoPlaylists[mood] || isoPlaylists["Neutral"];
+    const interval = setInterval(() => {
+        isoIndex++;
 
-    let index = 0;
-
-    clearInterval(isoTimer);
-
-    playPlaylist(sequence[index]);
-
-    isoTimer = setInterval(() => {
-        index++;
-
-        if (index >= sequence.length) {
-            clearInterval(isoTimer);
+        if (isoIndex >= isoSequence.length) {
+            clearInterval(interval);
             return;
         }
 
-        playPlaylist(sequence[index]);
+        playMood(isoSequence[isoIndex]);
 
-    }, 30000); // change playlist every 30 seconds
+    }, 60000); // shift mood every 60s (therapy progression)
 }
 
+function detectMoodChange() {
+    const emotionElement = document.getElementById("emotion");
 
-// -------- (REMOVED: watchEmotion polling. Handled strictly by script.js explicit triggers now) --------
+    if (!emotionElement) {
+        console.log("❌ Emotion element missing");
+        return;
+    }
 
+    setInterval(() => {
+        const currentMood = emotionElement.innerText.trim();
 
-// -------- INIT --------
-window.addEventListener("DOMContentLoaded", () => {
+        if (!currentMood) return;
+
+        if (currentMood !== lastMood) {
+            lastMood = currentMood;
+            console.log("🧠 Mood detected:", currentMood);
+            startISOFlow(currentMood);
+        }
+
+    }, 1000);
+}
+
+window.addEventListener("load", () => {
     createMusicUI();
-    // watchEmotion() removed to enforce strict voice/text-triggered closed loop.
+    detectMoodChange();
 });
